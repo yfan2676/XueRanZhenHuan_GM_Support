@@ -1,0 +1,10 @@
+[project]
+name = "xueran-zhenhuan-gm-support"
+version = "0.1.0"
+description = "Storyteller (GM) assistant web app for the Blood on the Clocktower custom mod 'Empresses in the Palace' (血战甄嬛传)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.52.0",
+]
