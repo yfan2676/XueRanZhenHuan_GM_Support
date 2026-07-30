@@ -7,7 +7,9 @@
 - [docs/rules.md](docs/rules.md) —— 完整角色规则转录 + 官方规则映射 + 边界情况裁定
 - [docs/decision_maps.md](docs/decision_maps.md) —— 说书人决策流程图（夜晚结算、处决流程、恶魔更替等）
 - `game_rules.jpg` —— 原始规则图
-- [docs/demo_gm_8p_jingdian.mp4](docs/demo_gm_8p_jingdian.mp4) —— 说书人助手演示（8 人经典后宫：备局 → 首夜 → 处决皇上 → 皇后继任 → 守护挡刀 → 处决皇后善良获胜）
+- [docs/demo.mp4](docs/demo.mp4) —— 演示录屏（1920×1168，约 2 分半），两段：
+  - 说书人助手：8 人经典后宫，备局 → 首夜 → 处决皇上 → 皇后继任 → 守护挡刀 → 处决皇后，善良获胜
+  - 无说书人模式：7 人建房 → 入座就绪 → 自动发身份 → 夜晚行动 → 举手投票 → 终局身份公开
 
 ## 开发环境
 
