@@ -400,7 +400,8 @@ def nominate(room, name, nominee):
         eligible = [q["seat"] for q in room["seats"] if q["alive"] or q["ghost_vote"]]
         room["vote_state"] = {"votes": {}, "eligible": eligible}
         announce(room, tag,
-                 f"开始举手表决：门槛 {result['threshold']} 票，请全体有票玩家表态")
+                 f"开始举手表决：门槛 {result['threshold']} 票，请全体有票玩家表态"
+                 "（票型保密，全员表态后一并公开）")
     return _after_day_change(room)
 
 
@@ -417,8 +418,12 @@ def cast_vote(room, name, val):
         yes = [int(s) for s, v in vs["votes"].items() if v]
         result = engine.vote(room, yes)
         tag = f"天{room['day_number']}"
+        no = [int(s) for s, v in vs["votes"].items() if not v]
         names = "、".join(engine.pub_label(engine.get_p(room, s)) for s in sorted(yes))
-        announce(room, tag, f"举手表决结束，赞成：{names or '无人'}")
+        no_names = "、".join(engine.pub_label(engine.get_p(room, s)) for s in sorted(no))
+        announce(room, tag,
+                 f"举手表决结束（{len(yes)}/{len(vs['votes'])} 票赞成）"
+                 f"，赞成：{names or '无人'}；反对：{no_names or '无人'}")
         for ev in result["events"]:
             announce(room, tag, ev)
         room["vote_state"] = None
@@ -541,16 +546,19 @@ def view(room, name=None):
         nom = ds.get("open_nomination")
         vs = room.get("vote_state")
         if nom and vs:
-            out["day"]["open_vote"] = {
+            # 票型保密：只公开「已表态人数」，不下发任何人的票向（自己的除外）
+            ov = {
                 "nominator": nom["nominator"],
                 "nominee": nom["nominee"],
                 "eligible": vs["eligible"],
-                "votes": vs["votes"],
-                "yes": sum(1 for v in vs["votes"].values() if v),
+                "pending": [s for s in vs["eligible"] if str(s) not in vs["votes"]],
                 "voted": len(vs["votes"]),
                 "total": len(vs["eligible"]),
                 "threshold": engine.vote_threshold(room),
             }
+            if me:
+                ov["my_vote"] = vs["votes"].get(str(me["seat"]))
+            out["day"]["open_vote"] = ov
 
     if phase == "night" and room.get("night_state"):
         steps = room["night_state"]["steps"]
