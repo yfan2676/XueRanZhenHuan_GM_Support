@@ -12,5 +12,8 @@ wheels/
 # 运行时对局数据（store.py 会自动创建）
 data/
 
+# 入场口令
+.env
+
 # macOS
 .DS_Store

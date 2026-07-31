@@ -66,6 +66,12 @@ function roleAvatar(roleId, cls = "sm") {
   });
 }
 
+/* 布局断点与 style.css 保持一致：
+   isCompact —— 圆桌已摊平成卡片网格、侧栏移到座位下方（影响提示文案与滚动定位）
+   isPhone   —— 真·小屏触屏细节（如不自动弹键盘） */
+const isCompact = () => window.matchMedia("(max-width: 980px)").matches;
+const isPhone = () => window.matchMedia("(max-width: 700px)").matches;
+
 function seatPosition(i, n, radius = 260) {
   const angle = -Math.PI / 2 + (i * 2 * Math.PI) / n;
   return {
@@ -73,6 +79,86 @@ function seatPosition(i, n, radius = 260) {
     top: `${320 + radius * Math.sin(angle)}px`,
   };
 }
+
+/* ---------- 窄屏「环形圆桌」----------
+   640px 的圆桌在手机上放不下，但邻座关系必须一眼可见，
+   所以把座位摆在网格四条边上（跑道形），中间留出一张小桌子：
+   1 号在顶边正中，顺时针绕一圈，与电脑端圆桌方向一致。 */
+
+const RING_MIN_SEAT = 118;   // 单个座位卡最小宽度（含 8px 间距一起算）
+
+/* 在不超过 maxCols 的前提下挑列数：优先列多行少（少滚动），且空位 ≤2 */
+function pickRing(n, maxCols) {
+  const hi = Math.max(3, Math.min(maxCols, Math.floor(n / 2)));
+  let fallback = null;
+  for (let cols = hi; cols >= 3; cols--) {
+    const rows = Math.max(3, Math.ceil((n + 4 - 2 * cols) / 2));
+    const extra = 2 * cols + 2 * rows - 4 - n;   // 环上多出来的空格子
+    if (extra < 0) continue;
+    if (extra <= 2) return { cols, rows };
+    fallback = fallback || { cols, rows };
+  }
+  return fallback || { cols: 3, rows: Math.max(3, Math.ceil((n - 2) / 2)) };
+}
+
+/* 顺时针列出环上的格子；多余的空位留在底边正中（说书人的位置） */
+function ringCells(cols, rows, n) {
+  const cells = [];
+  for (let c = 0; c < cols; c++) cells.push([0, c]);                 // 顶边 →
+  for (let r = 1; r < rows - 1; r++) cells.push([r, cols - 1]);      // 右边 ↓
+  for (let c = cols - 1; c >= 0; c--) cells.push([rows - 1, c]);     // 底边 ←
+  for (let r = rows - 2; r >= 1; r--) cells.push([r, 0]);            // 左边 ↑
+  const extra = cells.length - n;
+  if (extra > 0)
+    cells.splice(cols + (rows - 2) + Math.floor((cols - extra) / 2), extra);
+  const k = Math.floor(cols / 2);   // 旋转到 1 号在顶边正中
+  return cells.slice(k).concat(cells.slice(0, k));
+}
+
+function applyRing(table) {
+  if (!table || !table.isConnected || table.classList.contains("names")) return;
+  const seats = [...table.querySelectorAll(".seat")];
+  const center = table.querySelector(".table-center");
+  if (!isCompact()) {   // 电脑端仍是绝对定位的圆桌，清掉行内网格属性
+    table.classList.remove("ring");
+    table.style.gridTemplateColumns = "";
+    for (const el of [...seats, center]) {
+      if (!el) continue;
+      el.style.gridRow = el.style.gridColumn = "";
+    }
+    return;
+  }
+  const width = table.clientWidth || window.innerWidth - 20;
+  const maxCols = Math.max(3, Math.floor((width + 8) / (RING_MIN_SEAT + 8)));
+  const { cols, rows } = pickRing(seats.length, maxCols);
+  const cells = ringCells(cols, rows, seats.length);
+  table.classList.add("ring");
+  table.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+  seats.forEach((el, i) => {
+    const [r, c] = cells[i];
+    el.style.gridRow = String(r + 1);
+    el.style.gridColumn = String(c + 1);
+  });
+  if (center) {                      // 中间那张“桌子”占满环内空地
+    center.style.gridRow = `2 / ${rows}`;
+    center.style.gridColumn = `2 / ${cols}`;
+  }
+}
+
+/* 圆桌容器：插入 DOM 后量一次宽度决定环形排布 */
+function ringTable(center, seats, cls = "round-table") {
+  const el = h("div", { class: cls }, center, ...seats);
+  requestAnimationFrame(() => applyRing(el));
+  return el;
+}
+
+let ringTick = 0;
+window.addEventListener("resize", () => {
+  cancelAnimationFrame(ringTick);
+  // 就地重排而不是整屏重绘：避免旋转屏幕时丢掉输入焦点/未提交的内容
+  ringTick = requestAnimationFrame(() =>
+    document.querySelectorAll(".round-table").forEach(applyRing));
+});
 
 // ---------- 主页：对局管理 / 恢复 ----------
 
@@ -238,7 +324,7 @@ function renderNameScreen() {
     h("h2", { class: "screen-title" }, "第二步 · 录入玩家姓名"),
     h("p", { class: "hint" }, "按座位顺时针填写，回车跳到下一位。座位顺序影响邻座类技能（小允子、三阿哥、浣碧）。"),
     h("div", { class: "table-wrap" },
-      h("div", { class: "round-table" },
+      h("div", { class: "round-table names" },
         h("div", { class: "table-center" },
           h("div", { class: "big" }, `${n} 名玩家`),
           h("div", { class: "comp" }, "填写完毕后分配角色")
@@ -257,8 +343,11 @@ function renderNameScreen() {
       h("button", { class: "primary", onclick: submitNames }, "确认名单，分配角色 →")
     )
   );
-  const first = document.querySelector('input[data-i="0"]');
-  first && first.focus();
+  // 手机上不自动聚焦：否则一进页面就弹键盘、顶掉半屏内容
+  if (!isPhone()) {
+    const first = document.querySelector('input[data-i="0"]');
+    first && first.focus();
+  }
 }
 
 async function submitNames() {
@@ -334,15 +423,17 @@ function renderRoleScreen() {
   app.replaceChildren(
     h("h2", { class: "screen-title" }, "第三步 · 角色分配"),
     h("p", { class: "hint" },
-      "点击一个座位选中，再点另一个座位交换角色；选中后也可在右侧更换为未使用的角色。悬停座位可查看技能。"),
+      isCompact()
+        ? "点一个座位选中，再点另一个座位交换角色；选中后可在下方面板更换为未使用的角色。"
+        : "点击一个座位选中，再点另一个座位交换角色；选中后也可在右侧更换为未使用的角色。悬停座位可查看技能。"),
     h("div", { class: "table-wrap" },
-      h("div", { class: "round-table" },
+      ringTable(
         h("div", { class: "table-center" },
           h("div", { class: "big" }, state.game.setup_name ? `预设：${state.game.setup_name}` : "自定义配置"),
           h("div", { class: "comp" }, `${n} 名玩家`),
           h("div", { class: "comp-bar", style: "justify-content:center" }, ...compChips)
         ),
-        ...seats
+        seats
       ),
       h("div", { class: "side-panel" },
         h("h3", "预设板子"),
@@ -381,6 +472,9 @@ function renderRoleScreen() {
       )
     )
   );
+  // 窄屏侧栏在座位网格下方，选中座位后把详情滚进视野
+  if (isCompact() && state.selectedSeat != null)
+    document.querySelector(".detail-box")?.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
 const TEAM_LABEL = (t) => state.meta.team_names[t] || t;
@@ -604,7 +698,7 @@ function renderNightScreen() {
     h("p", { class: "hint" }, `对局 ID：${state.game.id}`),
     h("div", { class: "table-wrap" },
       h("div", { class: "night-left" }, h("h3", "夜晚行动顺序"), stepList),
-      h("div", { class: "side-panel wide" }, card, logPanel(v))
+      h("div", { class: "side-panel wide panel-first" }, card, logPanel(v))
     )
   );
 }
@@ -716,7 +810,7 @@ function renderDayScreen() {
     h("p", { class: "hint" },
       `对局 ID：${state.game.id} · 存活 ${v.alive_count} 人 · 处决门槛 ${v.threshold} 票 · 点击玩家查看/执行白天行动`),
     h("div", { class: "table-wrap" },
-      h("div", { class: "round-table" },
+      ringTable(
         h("div", { class: "table-center" },
           h("div", { class: "big" }, `第 ${v.day_number} 天`),
           h("div", { class: "comp" }, `存活 ${v.alive_count} · 门槛 ${v.threshold}`),
@@ -724,9 +818,9 @@ function renderDayScreen() {
             ? h("div", { class: "comp", style: "color:var(--danger)" }, "今日已处决，等待入夜")
             : null
         ),
-        ...seats
+        seats
       ),
-      h("div", { class: "side-panel" },
+      h("div", { class: "side-panel panel-first" },
         h("div", { class: "actions", style: "justify-content:flex-start" },
           h("button", {
             class: "primary",
