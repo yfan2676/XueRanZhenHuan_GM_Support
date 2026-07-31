@@ -520,12 +520,14 @@ function dayActionRow(v, a) {
         },
       }, a.label)));
   if (open && a.needs_target) {
-    const cands = v.seats.filter((s) => s.alive && s.seat !== v.my_seat);
+    // 死者同样可选（如检举一名已死玩家的身份）：只标注，不拦截
+    const cands = v.seats.filter((s) => s.seat !== v.my_seat);
     row.append(h("div", { class: "chips", style: "margin-top:8px" },
       ...cands.map((s) => h("button", {
         class: `chip ${state.ui.actTarget === s.seat ? "on" : ""}`,
         onclick: () => { state.ui.actTarget = s.seat; render(); },
-      }, `${s.seat}号 ${s.name}`))));
+      }, `${s.seat}号 ${s.name}`,
+        s.alive === false ? h("span", { class: "chip-note" }, " 已死") : null))));
     if (a.needs_role_guess) {
       const sel = h("select", {
         onchange: (e) => { state.ui.actGuess = e.target.value; },

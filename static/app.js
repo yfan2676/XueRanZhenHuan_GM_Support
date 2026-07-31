@@ -865,9 +865,11 @@ function openDayMenu(p) {
     const btn = h("button", { class: act.danger ? "danger" : "" }, act.label);
     let targetSel = null, roleSel = null;
     if (act.needs_target) {
+      // 死者同样可选（如祺贵人检举一名已死玩家的身份）：只标注，不拦截
       targetSel = h("select", {},
-        ...v.seats.filter((q) => q.alive && q.seat !== p.seat)
-          .map((q) => h("option", { value: q.seat }, `${q.seat}号 ${q.name}`)));
+        ...v.seats.filter((q) => q.seat !== p.seat)
+          .map((q) => h("option", { value: q.seat },
+            `${q.seat}号 ${q.name}${q.alive ? "" : " ☠已死"}`)));
       row.append(targetSel);
     }
     if (act.needs_role_guess) {

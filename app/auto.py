@@ -372,9 +372,8 @@ def day_action(room, name, action, params):
         t = params.get("target")
         if not t:
             raise ValueError("请选择目标")
-        tp = engine.get_p(room, int(t))
-        if not tp["alive"]:
-            raise ValueError("目标已死亡")
+        # 死者同样可以作为目标（祺贵人检举死者身份、齐妃禁言死者均有意义）：
+        # 不拦截，效果由 engine 判定
         if int(t) == p["seat"]:
             raise ValueError("不能以自己为目标")
     if action == "accuse":
