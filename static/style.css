@@ -259,6 +259,17 @@ button.small { padding: 4px 10px; font-size: 12px; }
   border-left: 2px solid #4a363b; margin-bottom: 4px; line-height: 1.5;
 }
 
+/* 说书人备忘：与事件记录同栏但分块，靠标签分组 + 左边金线区分 */
+.memo-panel { border-top: 1px solid #4a363b; margin-top: 12px; padding-top: 4px; }
+.memo-group { margin-bottom: 10px; }
+.memo-group:last-child { margin-bottom: 0; }
+.memo-tag {
+  font-size: 11px; color: var(--gold-dim); letter-spacing: 1px;
+  margin: 0 0 3px 2px;
+}
+.memo-panel .log-item { border-left-color: var(--gold-dim); color: var(--text); }
+.memo-more { font-size: 11px; color: var(--muted); margin-top: 6px; }
+
 .day-act { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
 .day-act select { flex: 1; min-width: 140px; background: var(--panel-2); color: var(--text);
   border: 1px solid var(--gold-dim); border-radius: 4px; padding: 6px; font-size: 13px; }

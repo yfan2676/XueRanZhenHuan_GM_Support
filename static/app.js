@@ -603,6 +603,23 @@ function logPanel(v, count = 10) {
     ...items.map((x) => h("div", { class: "log-item" }, x)));
 }
 
+// 说书人备忘（保密）：与"事件记录"分开——事件记录是流水账，这里是结算判定细节。
+// 按事件成组（夜1 / 白天1 …），组倒序（最近的事件在最上面），组内保持结算先后。
+function memoPanel(v, groupCount = 4) {
+  const all = v.memos || [];
+  const groups = all.slice(-groupCount).reverse();
+  return h("div", { class: "log-panel memo-panel" },
+    h("h3", "说书人备忘（保密）"),
+    ...(groups.length
+      ? groups.map((g) => h("div", { class: "memo-group" },
+          h("div", { class: "memo-tag" }, g.tag),
+          ...g.items.map((x) => h("div", { class: "log-item" }, x))))
+      : [h("div", { class: "log-item" }, "暂无备忘")]),
+    all.length > groups.length
+      ? h("div", { class: "memo-more" }, `⋯ 更早还有 ${all.length - groups.length} 组`)
+      : null);
+}
+
 // ---------- 夜晚向导 ----------
 
 // 从选项里随机抽 count 个：优先只在 avoid !== true 的选项里抽（死者不进池子，
@@ -871,6 +888,7 @@ function renderDayScreen() {
         h("h3", "提名记录"),
         ...(ds.nominations || []).map((x) => h("div", { class: "log-item" },
           `${x.nominator}号 提名 ${x.nominee}号：${x.votes.length} 票 ${x.passed ? "✔ 处决" : "✘ 未过"}`)),
+        memoPanel(v),
         logPanel(v)
       )
     )

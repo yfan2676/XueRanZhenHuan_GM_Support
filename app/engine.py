@@ -128,6 +128,23 @@ def log(game, msg):
     game["log"].append(msg)
 
 
+def memo(game, tag, items):
+    """追加一组说书人备忘（保密）。
+
+    与 log（事件记录）分开：事件记录是流水账，备忘是结算时产生的、只有说书人该知道的
+    判定细节（技能落空、连锁、反杀、继任……）。按事件顺序成组存放，tag 形如 夜1 / 白天2；
+    同一事件内多次追加（一个白天里处决两次）合并进同一组。
+    """
+    items = [x for x in items if x]
+    if not items:
+        return
+    groups = game.setdefault("memos", [])
+    if groups and groups[-1]["tag"] == tag:
+        groups[-1]["items"].extend(items)
+    else:
+        groups.append({"tag": tag, "items": list(items)})
+
+
 def role_in_play(game, rid):
     for p in game["seats"]:
         if p["role"] == rid:
@@ -166,6 +183,7 @@ def start_game(game):
         "winner": None,
         "win_reason": None,
         "log": [],
+        "memos": [],
         "pending_night_events": [],
         "last_private_chats": [],
         "huanghou_disabled": False,
@@ -420,6 +438,8 @@ def resolve_night(game, answers, commit=False):
     rpt["winner"] = g.get("winner")
     rpt["win_reason"] = g.get("win_reason")
     if commit:
+        # 只在真正落地时记进备忘：预览可以反复重算
+        memo(g, f"夜{g['night_number']}", rpt["notes"])
         _commit_night(g)
         return {"report": rpt, "committed": True}, g
     return {"report": rpt, "committed": False}, None
@@ -1162,6 +1182,7 @@ def _execute(game, seat, result):
     rpt = {"deaths": [], "revived": [], "packets": [], "notes": []}
     _kill(game, rpt, seat, "execution")
     result["events"].extend(rpt["notes"])
+    memo(game, f"白天{game['day_number']}", rpt["notes"])
     ds["execution_done"] = True
     ds["ended"] = True
     check_win(game)
