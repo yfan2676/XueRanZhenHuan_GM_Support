@@ -206,7 +206,7 @@ def maybe_resolve(room):
 
 
 def _player_decision_seat(room, key):
-    """需要交给具体玩家（而非随机）的结算决定。"""
+    """把 engine 标记为 gm=False 的裁定定位到具体玩家（无说书人模式下由该玩家自己选）。"""
     if key.startswith("nian_"):
         return int(key.split("_", 1)[1])
     if key == "tsh_successor":
@@ -223,7 +223,8 @@ def _resolve_loop(room):
         result, _ = engine.resolve_night(room, answers, commit=False)
         pend = result.get("pending")
         if pend:
-            seat = _player_decision_seat(room, pend["key"])
+            # gm=True 的裁定本就归说书人，无说书人模式下直接掷骰；其余转交给对应玩家。
+            seat = None if pend.get("gm", True) else _player_decision_seat(room, pend["key"])
             if seat is not None:
                 room["night_pending"] = {**pend, "seat": seat}
                 store.update(room)

@@ -605,6 +605,18 @@ function logPanel(v, count = 10) {
 
 // ---------- 夜晚向导 ----------
 
+// 从选项里随机抽 count 个：优先只在 avoid !== true 的选项里抽（死者不进池子，
+// 给死人发情报是白给）；若池子不够则退回全部选项。
+// 只用于 gm 决策（说书人自己选发什么情报 / 结算裁定），玩家指的目标一律不代掷。
+function rollOptions(options, count) {
+  const pool = options.filter((o) => !o.avoid);
+  const bag = (pool.length >= count ? pool : options).slice();
+  const out = [];
+  while (out.length < count && bag.length)
+    out.push(bag.splice(Math.floor(Math.random() * bag.length), 1)[0]);
+  return out;
+}
+
 function renderNightScreen() {
   const v = state.view;
   const ns = v.night_state;
@@ -681,6 +693,14 @@ function renderNightScreen() {
           class: "primary",
           onclick: () => submitNightAction(cur, false),
         }, need === 0 ? "确认" : `确认（已选 ${state.nightSel.length}/${need}）`),
+        cur.gm && need > 0 && cur.pick.options.length
+          ? h("button", {
+              onclick: () => {
+                state.nightSel = rollOptions(cur.pick.options, need).map((o) => o.seat);
+                renderNightScreen();
+              },
+            }, need === 1 ? "🎲 随机" : `🎲 随机 ${need} 人`)
+          : null,
         cur.optional ? h("button", { onclick: () => submitNightAction(cur, true) }, "无行动") : null
       )
     );
@@ -749,7 +769,19 @@ function renderPending(p) {
           class: "chip",
           onclick: () => { state.answers[p.key] = o.value; resolveLoop(false); },
         }, o.label))
-      )
+      ),
+      // 只有说书人自己的裁定能掷骰；年羹尧带人、太上皇传位本质是玩家的选择
+      p.gm
+        ? h("div", { class: "actions" },
+            h("button", {
+              onclick: () => {
+                const pick = rollOptions(p.options, 1)[0];
+                if (!pick) return;
+                state.answers[p.key] = pick.value;
+                resolveLoop(false);
+              },
+            }, "🎲 随机裁定"))
+        : null
     )
   );
 }

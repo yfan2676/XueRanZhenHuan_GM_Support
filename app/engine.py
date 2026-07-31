@@ -26,13 +26,19 @@ DEMON_KINDS_HUANGSHANG_LINE = {"huangshang", "nvhuang", "basic"}
 
 
 class NeedDecision(Exception):
-    """结算过程中需要说书人裁定。"""
+    """结算过程中需要裁定。
 
-    def __init__(self, key: str, prompt: str, options: list):
+    gm=True：说书人自己裁定（可随机）。
+    gm=False：本质是某个玩家的选择，只是通过说书人的界面录入，不可随机
+              （无说书人模式下这些会被转交给该玩家，见 auto._player_decision_seat）。
+    """
+
+    def __init__(self, key: str, prompt: str, options: list, gm: bool = True):
         super().__init__(prompt)
         self.key = key
         self.prompt = prompt
         self.options = options  # [{value, label}]
+        self.gm = gm
 
 
 # ---------------- 基础工具 ----------------
@@ -185,10 +191,14 @@ def _opt(p, note=""):
 
     死亡玩家一律照常列出、可以选中：界面不替说书人/玩家做合法性判断，技能照常发动，
     只是在破晓结算时不产生效果（信息类技能则明确回报"无效"）。仅在选项上标注"已死"。
+
+    avoid：仅用于说书人决策步骤上的"🎲 随机"按钮——死者不进随机池（给死人发情报是
+    白给），但依然照常显示、可以手动点选。骰子不做规则判断。
     """
-    if not p.get("alive", True):
+    dead = not p.get("alive", True)
+    if dead:
         note = f"已死 · {note}" if note else "已死"
-    return {"seat": p["seat"], "label": pub_label(p), "note": note}
+    return {"seat": p["seat"], "label": pub_label(p), "note": note, "avoid": dead}
 
 
 def _dead_target(g, rpt, seat, what):
@@ -200,7 +210,12 @@ def _dead_target(g, rpt, seat, what):
     return True
 
 
-def _step(sid, kind, actor, title, prompt, options, count=1, optional=False, extras=None):
+def _step(sid, kind, actor, title, prompt, options, count=1, optional=False, extras=None,
+          gm=False):
+    """gm=True 表示这一步是**说书人自己**做的选择（发什么情报），界面会给"🎲 随机"。
+
+    默认 False：绝大多数步骤录入的是玩家自己指的目标，说书人只是代录，不能替玩家掷骰。
+    """
     return {
         "id": sid, "kind": kind,
         "seat": actor["seat"] if actor else None,
@@ -209,6 +224,7 @@ def _step(sid, kind, actor, title, prompt, options, count=1, optional=False, ext
         "pick": {"count": count, "options": options},
         "optional": optional,
         "extras": extras or {},
+        "gm": gm,
         "collected": None,
     }
 
@@ -245,7 +261,8 @@ def build_night_steps(game):
                    if ROLE_BY_ID[p["role"]]["gender"] == "F" and p is not alr]
         steps.append(_step("alr_info", "pick", alr, "安陵容 · 情报",
                            "说书人选择一名女性角色告知安陵容（真实信息）",
-                           [_opt(p, ROLE_BY_ID[p["role"]]["name"]) for p in females]))
+                           [_opt(p, ROLE_BY_ID[p["role"]]["name"]) for p in females],
+                           gm=True))
         steps.append(_step("alr_poison", "pick", alr, "安陵容 · 香粉下毒",
                            "选择一名女性角色下毒（至下一个黄昏），或无行动",
                            [_opt(p) for p in females], optional=True))
@@ -310,7 +327,8 @@ def build_night_steps(game):
             goods = [p for p in everyone if p["alignment"] == "good" and p is not yr]
             steps.append(_step("bind", "pick", yr, "玉娆 · 姐妹影分身",
                                "说书人选择一名善良玩家告知玉娆（其被恶魔夜杀时玉娆陪葬）",
-                               [_opt(p, ROLE_BY_ID[p["role"]]["name"]) for p in goods]))
+                               [_opt(p, ROLE_BY_ID[p["role"]]["name"]) for p in goods],
+                               gm=True))
 
     jx = find("jinxi")
     if jx:
@@ -366,16 +384,20 @@ def record_action(game, step_id, collected):
 
 # ---------------- 夜晚结算 ----------------
 
-def _need(answers, key, prompt, options):
+def _need(answers, key, prompt, options, gm=True):
     if key in answers:
         return answers[key]
-    raise NeedDecision(key, prompt, options)
+    raise NeedDecision(key, prompt, options, gm)
 
 
 def _seat_options(g, seats=None):
-    """裁定用的座位选项：死者同样列出（标注"已死"），由说书人/玩家自行判断。"""
+    """裁定用的座位选项：死者同样列出（标注"已死"），由说书人/玩家自行判断。
+
+    avoid 同 _opt：死者不进"🎲 随机"的池子，但仍可手动点选。
+    """
     return [{"value": q["seat"],
-             "label": pub_label(q) + ("（已死）" if not q["alive"] else "")}
+             "label": pub_label(q) + ("（已死）" if not q["alive"] else ""),
+             "avoid": not q["alive"]}
             for q in (seats if seats is not None else g["seats"])]
 
 
@@ -393,7 +415,8 @@ def resolve_night(game, answers, commit=False):
     try:
         _run_night(g, answers or {}, rpt)
     except NeedDecision as d:
-        return {"pending": {"key": d.key, "prompt": d.prompt, "options": d.options}}, None
+        return {"pending": {"key": d.key, "prompt": d.prompt, "options": d.options,
+                            "gm": d.gm}}, None
     rpt["winner"] = g.get("winner")
     rpt["win_reason"] = g.get("win_reason")
     if commit:
@@ -462,7 +485,7 @@ def _kill(g, rpt, seat, cause, killer=None):
             opts = _seat_options(g)
             if opts:
                 tgt = _need(g["_answers"], f"nian_{seat}",
-                            f"年羹尧（{pub_label(p)}）死亡，选择带走一名玩家", opts)
+                            f"年羹尧（{pub_label(p)}）死亡，选择带走一名玩家", opts, gm=False)
                 if not _dead_target(g, rpt, int(tgt), "年羹尧带人"):
                     rpt["notes"].append(f"年羹尧带走 {pub_label(get_p(g, int(tgt)))}")
                     _kill(g, rpt, int(tgt), "ability")
@@ -570,7 +593,7 @@ def _run_night(g, answers, rpt):
             opts = _seat_options(g)
             if opts:
                 tgt = _need(answers, f"nian_{ev['seat']}",
-                            f"年羹尧（{pub_label(p)}）白天死亡，今夜带走一名玩家", opts)
+                            f"年羹尧（{pub_label(p)}）白天死亡，今夜带走一名玩家", opts, gm=False)
                 if not _dead_target(g, rpt, int(tgt), "年羹尧带人"):
                     rpt["notes"].append(f"年羹尧带走 {pub_label(get_p(g, int(tgt)))}")
                     defer_kill(int(tgt), "ability")
@@ -719,7 +742,8 @@ def _run_night(g, answers, rpt):
                 opts = _seat_options(g, [get_p(g, c) for c in chats])
                 if opts:
                     succ = int(_need(answers, "tsh_successor",
-                                     "太上皇自刀传位：从上个白天私聊过说书人的玩家中选择新皇上", opts))
+                                     "太上皇自刀传位：从上个白天私聊过说书人的玩家中选择新皇上",
+                                     opts, gm=False))
                     deferred.append({"kind": "tsh_succession",
                                      "seat": d["seat"], "successor": succ})
                     rpt["notes"].append(
