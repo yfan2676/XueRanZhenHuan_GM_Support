@@ -7,12 +7,15 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import auto, engine
+from . import auth, auto, engine
 from .roles import ROLE_BY_ID, ROLES, TEAM_NAMES
 from .setups import MAX_PLAYERS, MIN_PLAYERS, analyze, generate, setups_for
 from .store import store
 
 app = FastAPI(title="血战甄嬛传 GM 助手")
+
+# 共享口令保护（设置 GM_PASSWORD 后生效）；须在挂载 static 前装，才能覆盖静态文件
+auth.install(app)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 

@@ -259,6 +259,17 @@ button.small { padding: 4px 10px; font-size: 12px; }
   border-left: 2px solid #4a363b; margin-bottom: 4px; line-height: 1.5;
 }
 
+/* 说书人备忘：与事件记录同栏但分块，靠标签分组 + 左边金线区分 */
+.memo-panel { border-top: 1px solid #4a363b; margin-top: 12px; padding-top: 4px; }
+.memo-group { margin-bottom: 10px; }
+.memo-group:last-child { margin-bottom: 0; }
+.memo-tag {
+  font-size: 11px; color: var(--gold-dim); letter-spacing: 1px;
+  margin: 0 0 3px 2px;
+}
+.memo-panel .log-item { border-left-color: var(--gold-dim); color: var(--text); }
+.memo-more { font-size: 11px; color: var(--muted); margin-top: 6px; }
+
 .day-act { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
 .day-act select { flex: 1; min-width: 140px; background: var(--panel-2); color: var(--text);
   border: 1px solid var(--gold-dim); border-radius: 4px; padding: 6px; font-size: 13px; }
@@ -390,7 +401,92 @@ button.danger:hover:not(:disabled) { background: var(--danger); color: #fff; }
 .reveal-role.team-minion { color: var(--minion); }
 .reveal-role.team-demon { color: var(--demon); }
 
-@media (max-width: 480px) {
+/* ---- 手机 / 窄窗布局（≤980px）：圆桌 640px + 侧栏 280px 已经并排放不下，摊平成卡片网格 ---- */
+@media (max-width: 980px) {
+  /* 输入类元素 ≥16px，避免 iOS 聚焦时自动放大页面 */
+  input, select, textarea { font-size: 16px !important; }
+  button { padding: 9px 16px; min-height: 40px; }
+  button.small { padding: 6px 12px; min-height: 32px; font-size: 13px; }
+
+  .table-wrap, .report-grid { gap: 12px; }
+  .table-wrap > .side-panel,
+  .side-panel.wide, .night-left, .report-grid .side-panel {
+    flex: 1 1 100%; max-width: none; min-width: 0; width: 100%;
+  }
+  /* 白天 / 夜晚：操作面板置顶，不必划过整桌人才够到按钮 */
+  .table-wrap > .side-panel.panel-first { order: -1; }
+
+  /* 圆桌 → 自适应网格：座位取消绝对定位，行内 left/top 自动失效 */
+  .round-table {
+    position: static;
+    width: 100%; height: auto;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 8px;
+  }
+  .table-center {
+    position: static; transform: none;
+    grid-column: 1 / -1;
+    width: 100%; height: auto;
+    border-radius: 10px; background: var(--panel);
+    padding: 10px 12px; gap: 4px;
+  }
+  .table-center .big { font-size: 15px; }
+
+  .seat {
+    position: static; transform: none;
+    width: auto; padding: 8px 6px;
+  }
+  .avatar.seat-avatar { width: 38px; height: 38px; margin: 0 auto 3px; }
+  .seat .seat-no { font-size: 11px; }
+  .seat .role-name { font-size: 13px; }
+
+  /* 环形圆桌：座位摆在网格四条边上，中间是一张小桌子（行列由 app.js 指定） */
+  .round-table.ring { gap: 6px; }
+  .ring .seat {
+    display: flex; flex-direction: column; justify-content: center;
+    padding: 7px 4px; min-width: 0;
+  }
+  .ring .seat > * { min-width: 0; max-width: 100%; }
+  .ring .seat .seat-no,
+  .ring .seat .role-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ring .avatar.seat-avatar { width: 34px; height: 34px; }
+
+  .ring .table-center {
+    grid-column: auto;                       /* 由 app.js 定位到环内空地 */
+    align-self: stretch;
+    background: radial-gradient(circle, #3a2428 0%, #2a1a1e 70%);
+    border: 2px solid var(--gold-dim); border-radius: 18px;
+    padding: 10px 6px; gap: 4px;
+  }
+  .ring .table-center .big { font-size: 13px; line-height: 1.4; }
+  .ring .table-center .comp { font-size: 11px; }
+  .ring .table-center .comp-bar { gap: 4px; }
+  .ring .table-center .comp-chip { padding: 2px 7px; font-size: 10px; }
+
+  /* 录入姓名：一行一位（序号在左、输入框在右），窄屏一列、宽一点自动多列 */
+  .round-table.names { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 6px; }
+  .names .seat { display: flex; align-items: center; gap: 10px; text-align: left; padding: 6px 8px; }
+  .names .seat .seat-no { flex: 0 0 44px; font-size: 13px; }
+  .names .seat input { flex: 1; text-align: left; padding: 8px 10px; }
+
+  .chip { padding: 8px 14px; }
+  .step-sum { white-space: normal; }
+}
+
+/* ---- 小屏细节（≤700px）：留白收紧、弹窗改底部抽屉 ---- */
+@media (max-width: 700px) {
   main { padding: 14px 10px 40px; }
+  header { padding: 12px 0 6px; }
   header h1 { font-size: 20px; letter-spacing: 2px; }
+  .screen-title { font-size: 17px; margin-bottom: 10px; }
+  .hint { font-size: 12px; margin-bottom: 14px; }
+
+  /* 弹窗改成底部抽屉，够得着且不遮挡太多 */
+  .modal-mask { align-items: flex-end; }
+  .modal { width: 100%; max-width: none; max-height: 88vh; border-radius: 14px 14px 0 0; padding: 16px 14px 24px; }
+  .role-opt { padding: 8px 12px; font-size: 14px; }
+  .day-act { flex-direction: column; align-items: stretch; }
+  .day-act select { width: 100%; }
+
+  .step-item { font-size: 12px; }
 }

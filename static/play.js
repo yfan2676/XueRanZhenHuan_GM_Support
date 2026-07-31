@@ -520,12 +520,14 @@ function dayActionRow(v, a) {
         },
       }, a.label)));
   if (open && a.needs_target) {
-    const cands = v.seats.filter((s) => s.alive && s.seat !== v.my_seat);
+    // 死者同样可选（如检举一名已死玩家的身份）：只标注，不拦截
+    const cands = v.seats.filter((s) => s.seat !== v.my_seat);
     row.append(h("div", { class: "chips", style: "margin-top:8px" },
       ...cands.map((s) => h("button", {
         class: `chip ${state.ui.actTarget === s.seat ? "on" : ""}`,
         onclick: () => { state.ui.actTarget = s.seat; render(); },
-      }, `${s.seat}号 ${s.name}`))));
+      }, `${s.seat}号 ${s.name}`,
+        s.alive === false ? h("span", { class: "chip-note" }, " 已死") : null))));
     if (a.needs_role_guess) {
       const sel = h("select", {
         onchange: (e) => { state.ui.actGuess = e.target.value; },
@@ -553,24 +555,27 @@ function dayActionRow(v, a) {
 
 function votePanel(v, ov) {
   const my = v.my_seat;
-  const myVote = ov.votes[String(my)];
+  const myVote = ov.my_vote;
   const eligible = ov.eligible.includes(my);
+  const pending = ov.pending || [];
   const panel = h("div", { class: "step-box vote-box" },
     h("div", { class: "step-title" },
       `${seatName(v, ov.nominator)} 提名了 ${seatName(v, ov.nominee)}`),
     h("div", { class: "vote-tally" },
-      h("span", { class: "vote-yes" }, `赞成 ${ov.yes}`),
-      ` / 门槛 ${ov.threshold} · 已表态 ${ov.voted}/${ov.total}`));
-  panel.append(h("div", { class: "hands" },
-    ...ov.eligible.map((seat) => {
-      const s = v.seats.find((x) => x.seat === seat);
-      const val = ov.votes[String(seat)];
-      const cls = val === true ? "yes" : val === false ? "no" : "";
-      return h("span", { class: `hand ${cls}` },
-        `${seat}号 ${s.name}`,
-        s.alive === false ? "（幽灵票）" : "",
-        val === true ? " ✋" : val === false ? " ✊" : " …");
-    })));
+      h("span", { class: "vote-yes" }, `已表态 ${ov.voted}/${ov.total}`),
+      ` · 门槛 ${ov.threshold} 票 · 票型保密，全员表态后一并公开`));
+  if (pending.length) {
+    panel.append(h("div", { class: "hands" },
+      ...pending.map((seat) => {
+        const s = v.seats.find((x) => x.seat === seat);
+        return h("span", { class: "hand" },
+          `${seat}号 ${s.name}`,
+          s.alive === false ? "（幽灵票）" : "",
+          " …");
+      })));
+    panel.append(h("p", { class: "hint", style: "text-align:left" },
+      `等待以上 ${pending.length} 人表态`));
+  }
   if (eligible) {
     panel.append(h("div", { class: "actions", style: "margin-top:10px" },
       h("button", {
@@ -581,7 +586,10 @@ function votePanel(v, ov) {
         class: myVote === false ? "primary" : "",
         onclick: () => doVote(false),
       }, "✊ 反对"),
-      h("span", { class: "hint", style: "margin:0" }, "全员表态后自动结算，可随时改票")));
+      h("span", { class: "hint", style: "margin:0" },
+        myVote == null
+          ? "你的票只有你自己看得到；全员表态后自动公开并结算"
+          : `你已投「${myVote ? "赞成" : "反对"}」，公开前可随时改票`)));
   } else {
     panel.append(h("p", { class: "hint" }, "你没有投票资格（幽灵票已用完）"));
   }

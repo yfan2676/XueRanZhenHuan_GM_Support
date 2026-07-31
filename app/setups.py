@@ -23,15 +23,16 @@ BASE_DIST = {
 MIN_PLAYERS = min(BASE_DIST)
 MAX_PLAYERS = max(BASE_DIST)
 
-# 预设模板：demon = 恶魔；minion_priority 按优先级截取；
-# required_* 必进；outsider_priority 填充顺序；其余村民随机补足。
+# 预设模板：demon = 恶魔；required_minions 是模板的核心爪牙（必进），
+# 剩余爪牙位从 MINION_POOL 随机补足；required_* 必进；
+# outsider_priority 填充顺序；其余村民随机补足。
 TEMPLATES = [
     {
         "id": "jingdian",
         "name": "经典后宫",
-        "description": "标准配置：皇后护驾、华妃压制提名，信息位齐全，适合首次接触本 Mod。",
+        "description": "标准配置：信息位齐全、爪牙随机，适合首次接触本 Mod。",
         "demon": "huangshang",
-        "minion_priority": ["huanghou", "huafei", "anlingrong"],
+        "required_minions": [],
         "required_townsfolk": [],
         "required_outsiders": [],
         "outsider_priority": ["zhenhuan", "longyue", "qifei"],
@@ -41,7 +42,7 @@ TEMPLATES = [
         "name": "对食疑云",
         "description": "苏培盛与槿汐对食：好人以为的信息位开局即是爪牙，外来者+1。",
         "demon": "huangshang",
-        "minion_priority": ["supeisheng", "anlingrong", "huafei"],
+        "required_minions": ["supeisheng"],
         "required_townsfolk": ["jinxi"],
         "required_outsiders": [],
         "outsider_priority": ["qifei", "sundaying", "zhenhuan"],
@@ -49,9 +50,9 @@ TEMPLATES = [
     {
         "id": "yulu",
         "name": "雨露均沾",
-        "description": "转化流：皇上侍寝拉人，三阿哥与果郡王是反制关键，甄嬛暗藏反杀。",
+        "description": "转化流：皇上侍寝拉人、华妃一丈红压提名，三阿哥与果郡王是反制关键。",
         "demon": "huangshang",
-        "minion_priority": ["huafei", "anlingrong", "huanghou"],
+        "required_minions": ["huafei"],
         "required_townsfolk": ["sanage", "guojunwang"],
         "required_outsiders": ["zhenhuan"],
         "outsider_priority": ["longyue", "qifei"],
@@ -59,9 +60,9 @@ TEMPLATES = [
     {
         "id": "taihou",
         "name": "太后垂帘",
-        "description": "太后双选一杀，说书人握生死；皇后死后可继任太后。甄嬛反杀失效。",
+        "description": "太后双选一杀，说书人握生死；皇后必在场，太后死后可继任。甄嬛反杀失效。",
         "demon": "taihou",
-        "minion_priority": ["huanghou", "anlingrong", "huafei"],
+        "required_minions": ["huanghou"],
         "required_townsfolk": [],
         "required_outsiders": [],
         "outsider_priority": ["longyue", "qifei", "zhenhuan"],
@@ -69,9 +70,9 @@ TEMPLATES = [
     {
         "id": "huihun",
         "name": "回魂夜",
-        "description": "回魂太上皇可自刀传位：上个白天私聊过说书人的玩家继任皇上，私聊有风险。",
+        "description": "回魂太上皇可自刀传位：上个白天私聊过说书人的玩家继任皇上，私聊有风险；华妃压提名。",
         "demon": "taishanghuang",
-        "minion_priority": ["huafei", "supeisheng", "anlingrong"],
+        "required_minions": ["huafei"],
         "required_townsfolk": [],
         "required_outsiders": [],
         "outsider_priority": ["qifei", "zhenhuan", "longyue"],
@@ -81,7 +82,7 @@ TEMPLATES = [
         "name": "姐妹情深",
         "description": "甄氏姐妹羁绊：玉娆绑定、浣碧数间距、甄嬛反杀，情报网与陪葬风险并存。",
         "demon": "huangshang",
-        "minion_priority": ["huanghou", "huafei", "anlingrong"],
+        "required_minions": [],
         "required_townsfolk": ["yurao", "huanbi"],
         "required_outsiders": ["zhenhuan"],
         "outsider_priority": ["longyue", "qifei"],
@@ -91,14 +92,38 @@ TEMPLATES = [
         "name": "祸乱后宫",
         "description": "狂徒+孙答应双炸弹：一死俱死、全村醉酒，说书人手握捉奸开关。",
         "demon": "huangshang",
-        "minion_priority": ["supeisheng", "huafei", "anlingrong"],
+        "required_minions": ["supeisheng"],
         "required_townsfolk": [],
         "required_outsiders": ["kuangtu", "sundaying"],
         "outsider_priority": ["qifei"],
     },
+    {
+        "id": "xiangfen",
+        "name": "香粉暗毒",
+        "description": "安陵容每晚下毒，温实初是唯一解药：好人信息的真假全看太医验毒的手速。",
+        "demon": "huangshang",
+        "required_minions": ["anlingrong"],
+        "required_townsfolk": ["wenshichu"],
+        "required_outsiders": [],
+        "outsider_priority": ["qifei", "longyue", "zhenhuan"],
+    },
+    {
+        "id": "anxiang",
+        "name": "暗香惑主",
+        "description": "太后握生死、安陵容毒信息位：敬妃的数字与浣碧的间距都可能是假的。",
+        "demon": "taihou",
+        "required_minions": ["anlingrong"],
+        "required_townsfolk": ["jingfei", "huanbi"],
+        "required_outsiders": [],
+        "outsider_priority": ["longyue", "zhenhuan", "qifei"],
+    },
 ]
 
 TEMPLATE_BY_ID = {t["id"]: t for t in TEMPLATES}
+
+# 苏培盛会改变村民/外来者配额，若参与随机补位会让"某个板子是否适用于 N 人"
+# 变得不确定，因此他只在模板显式声明时入场，不进随机池。
+MINION_POOL = [m for m in ids_by_team("minion") if m != "supeisheng"]
 
 
 def _slots(count: int, minions: list[str]) -> tuple[int, int, int]:
@@ -108,21 +133,25 @@ def _slots(count: int, minions: list[str]) -> tuple[int, int, int]:
     return t, o, m
 
 
-def _pick_minions(template: dict, m_slots: int) -> list[str]:
-    minions = list(template["minion_priority"][:m_slots])
-    for mid in ids_by_team("minion"):
-        if len(minions) >= m_slots:
-            break
-        if mid not in minions:
-            minions.append(mid)
-    return minions
+def _pick_minions(template: dict, m_slots: int, rng: random.Random) -> list[str]:
+    """必进爪牙 + 从随机池补足到 m_slots。"""
+    minions = list(template["required_minions"][:m_slots])
+    pool = [m for m in MINION_POOL if m not in minions]
+    rng.shuffle(pool)
+    return minions + pool[: m_slots - len(minions)]
 
 
 def feasible(template: dict, count: int) -> bool:
     if count not in BASE_DIST:
         return False
-    minions = _pick_minions(template, BASE_DIST[count][2])
-    t_slots, o_slots, _ = _slots(count, minions)
+    m_slots = BASE_DIST[count][2]
+    required = template["required_minions"]
+    if len(required) > m_slots:
+        return False
+    if len(set(required) | set(MINION_POOL)) < m_slots:
+        return False
+    # 苏培盛不进随机池，所以配额只由 required_minions 决定，与随机结果无关。
+    t_slots, o_slots, _ = _slots(count, required)
     if len(template["required_outsiders"]) > o_slots:
         return False
     if len(template["required_townsfolk"]) > t_slots:
@@ -151,7 +180,7 @@ def generate(count: int, template_id: str | None = None, rng: random.Random | No
     else:
         template = rng.choice(candidates)
 
-    minions = _pick_minions(template, BASE_DIST[count][2])
+    minions = _pick_minions(template, BASE_DIST[count][2], rng)
     t_slots, o_slots, _ = _slots(count, minions)
 
     outsiders = list(template["required_outsiders"])

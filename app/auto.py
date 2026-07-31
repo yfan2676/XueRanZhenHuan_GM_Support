@@ -206,7 +206,7 @@ def maybe_resolve(room):
 
 
 def _player_decision_seat(room, key):
-    """需要交给具体玩家（而非随机）的结算决定。"""
+    """把 engine 标记为 gm=False 的裁定定位到具体玩家（无说书人模式下由该玩家自己选）。"""
     if key.startswith("nian_"):
         return int(key.split("_", 1)[1])
     if key == "tsh_successor":
@@ -223,7 +223,8 @@ def _resolve_loop(room):
         result, _ = engine.resolve_night(room, answers, commit=False)
         pend = result.get("pending")
         if pend:
-            seat = _player_decision_seat(room, pend["key"])
+            # gm=True 的裁定本就归说书人，无说书人模式下直接掷骰；其余转交给对应玩家。
+            seat = None if pend.get("gm", True) else _player_decision_seat(room, pend["key"])
             if seat is not None:
                 room["night_pending"] = {**pend, "seat": seat}
                 store.update(room)
@@ -372,9 +373,8 @@ def day_action(room, name, action, params):
         t = params.get("target")
         if not t:
             raise ValueError("请选择目标")
-        tp = engine.get_p(room, int(t))
-        if not tp["alive"]:
-            raise ValueError("目标已死亡")
+        # 死者同样可以作为目标（祺贵人检举死者身份、齐妃禁言死者均有意义）：
+        # 不拦截，效果由 engine 判定
         if int(t) == p["seat"]:
             raise ValueError("不能以自己为目标")
     if action == "accuse":
@@ -400,7 +400,8 @@ def nominate(room, name, nominee):
         eligible = [q["seat"] for q in room["seats"] if q["alive"] or q["ghost_vote"]]
         room["vote_state"] = {"votes": {}, "eligible": eligible}
         announce(room, tag,
-                 f"开始举手表决：门槛 {result['threshold']} 票，请全体有票玩家表态")
+                 f"开始举手表决：门槛 {result['threshold']} 票，请全体有票玩家表态"
+                 "（票型保密，全员表态后一并公开）")
     return _after_day_change(room)
 
 
@@ -417,8 +418,12 @@ def cast_vote(room, name, val):
         yes = [int(s) for s, v in vs["votes"].items() if v]
         result = engine.vote(room, yes)
         tag = f"天{room['day_number']}"
+        no = [int(s) for s, v in vs["votes"].items() if not v]
         names = "、".join(engine.pub_label(engine.get_p(room, s)) for s in sorted(yes))
-        announce(room, tag, f"举手表决结束，赞成：{names or '无人'}")
+        no_names = "、".join(engine.pub_label(engine.get_p(room, s)) for s in sorted(no))
+        announce(room, tag,
+                 f"举手表决结束（{len(yes)}/{len(vs['votes'])} 票赞成）"
+                 f"，赞成：{names or '无人'}；反对：{no_names or '无人'}")
         for ev in result["events"]:
             announce(room, tag, ev)
         room["vote_state"] = None
@@ -541,16 +546,19 @@ def view(room, name=None):
         nom = ds.get("open_nomination")
         vs = room.get("vote_state")
         if nom and vs:
-            out["day"]["open_vote"] = {
+            # 票型保密：只公开「已表态人数」，不下发任何人的票向（自己的除外）
+            ov = {
                 "nominator": nom["nominator"],
                 "nominee": nom["nominee"],
                 "eligible": vs["eligible"],
-                "votes": vs["votes"],
-                "yes": sum(1 for v in vs["votes"].values() if v),
+                "pending": [s for s in vs["eligible"] if str(s) not in vs["votes"]],
                 "voted": len(vs["votes"]),
                 "total": len(vs["eligible"]),
                 "threshold": engine.vote_threshold(room),
             }
+            if me:
+                ov["my_vote"] = vs["votes"].get(str(me["seat"]))
+            out["day"]["open_vote"] = ov
 
     if phase == "night" and room.get("night_state"):
         steps = room["night_state"]["steps"]
