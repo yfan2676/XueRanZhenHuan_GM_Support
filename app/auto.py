@@ -1,22 +1,28 @@
 """无说书人（自动 GM）模式：房间、大厅、夜晚自动结算、白天提名投票。
 
 设计要点：
-- 完全复用 engine 的结算逻辑；说书人裁定点（NeedDecision）由机器人随机选择
-  一个合法选项，属于玩家自身的决定（年羹尧带人、太上皇传位）转交对应玩家。
+- 完全复用 engine 的结算逻辑；说书人裁定点（NeedDecision）由机器人按
+  docs/decision_maps.md 的随机策略选择（与说书人模式的「🎲 随机」同分布），
+  属于玩家自身的决定（年羹尧带人、温实初解毒、太上皇传位）转交对应玩家。
 - 公开信息进 announcements（全员可见）；夜晚私信按座位进 private_log；
-  醉/毒玩家的信息包由机器人伪造假信息（真人说书人的工作）。
+  说书人备注（engine 的 notes）一律进 hidden_log；醉/毒玩家的信息包由
+  机器人伪造假信息（真人说书人的工作）。
+- 视图（view）下发**全量状态**，由前端决定显示什么——私人局假定无恶意玩家，
+  换取一条视图路径的简单实现（与说书人模式一致）。
 - 身份 = 玩家名（私人局，约定不作弊；重连时任选自己的名字即可）。
 """
 
 import random
+from copy import deepcopy
 
 from . import engine
 from .roles import ROLE_BY_ID, ROLES, TEAM_NAMES
 from .setups import generate
 from .store import store
 
-# 说书人代为选择/宣告的夜晚步骤（玩家无需操作）
-AUTO_STEPS = {"evil_info", "alr_info", "bind"}
+# 说书人代为选择/宣告的夜晚步骤（玩家无需操作，机器人自动确认/按策略随机）
+AUTO_STEPS = {"evil_info", "alr_info", "bind",
+              "huanbi_info", "jingfei_info", "xiaoyunzi_info"}
 
 # 白天允许玩家自己触发的行动；direct_execute 仅狂徒本人可用（自曝伏诛）
 ALLOWED_DAY = {"private_chat", "force_drunk", "accuse", "silence", "violation"}
@@ -136,19 +142,24 @@ def prep_night(room):
     for s in room["night_state"]["steps"]:
         if s["collected"] is not None or s["id"] not in AUTO_STEPS:
             continue
+        # 与说书人「🎲 随机」同策略：avoid 的选项（死者、安陵容策略排除项）
+        # 不进随机池；池子不够时才退回全部选项
+        pool = [o["seat"] for o in s["pick"]["options"] if not o.get("avoid")]
         opts = [o["seat"] for o in s["pick"]["options"]]
+        if len(pool) < s["pick"]["count"]:
+            pool = opts
         if s["pick"]["count"] == 0:
             s["collected"] = {"no_action": False, "targets": []}
-        elif opts:
+        elif pool:
             s["collected"] = {"no_action": False,
-                              "targets": rnd.sample(opts, s["pick"]["count"])}
+                              "targets": rnd.sample(pool, s["pick"]["count"])}
         else:
             s["collected"] = {"no_action": True, "targets": []}
     store.update(room)
     return maybe_resolve(room)
 
 
-def night_action(room, name, step_id, no_action=False, targets=None, cure=None):
+def night_action(room, name, step_id, no_action=False, targets=None):
     if room.get("phase") != "night":
         raise ValueError("当前不在夜晚")
     if room.get("night_pending"):
@@ -170,13 +181,9 @@ def night_action(room, name, step_id, no_action=False, targets=None, cure=None):
             raise ValueError("目标不可重复")
         if any(t not in opts for t in ts):
             raise ValueError("存在非法目标")
-        if step["id"] == "protect" and ts[0] == p["flags"].get("last_protect"):
-            raise ValueError("不可连续两晚守护同一人")
-        if step["id"] == "jinzu" and ts[0] == p["flags"].get("last_jinzu"):
-            raise ValueError("不可连续两晚禁足同一人")
+        # 连守/连禁不拦截：允许选择、结算时无效（与说书人模式同一规则，
+        # 选项上有"连守无效"标注，rules.md 果郡王/宠妃条目）
         collected = {"no_action": False, "targets": ts}
-        if step["extras"].get("cure_toggle"):
-            collected["cure"] = True if cure is None else bool(cure)
     engine.record_action(room, step_id, collected)
     store.update(room)
     return maybe_resolve(room)
@@ -209,6 +216,8 @@ def _player_decision_seat(room, key):
     """把 engine 标记为 gm=False 的裁定定位到具体玩家（无说书人模式下由该玩家自己选）。"""
     if key.startswith("nian_"):
         return int(key.split("_", 1)[1])
+    if key.startswith("cure_"):          # cure_<温实初座位>_<夜数>：解不解毒由太医本人定
+        return int(key.split("_")[1])
     if key == "tsh_successor":
         for p in room["seats"]:
             if p.get("demon_kind") == "taishanghuang":
@@ -229,7 +238,9 @@ def _resolve_loop(room):
                 room["night_pending"] = {**pend, "seat": seat}
                 store.update(room)
                 return room
-            answers[pend["key"]] = rnd.choice(pend["options"])["value"]
+            # 与说书人「🎲 随机裁定」同策略：avoid 的选项（死者）不进随机池
+            pool = [o for o in pend["options"] if not o.get("avoid")] or pend["options"]
+            answers[pend["key"]] = rnd.choice(pool)["value"]
             continue
         result, new_game = engine.resolve_night(room, answers, commit=True)
         return _after_night(room, new_game, result["report"])
@@ -268,15 +279,19 @@ def _after_night(old, g, rpt):
 
 def _transition_packets(old, new, tag):
     """对比夜晚前后各座位状态，把身份变化私信给当事人。"""
-    demon = next((q for q in new["seats"] if q.get("is_demon") and q["alive"]), None)
+    # 侍寝转化只可能出自皇上：告知的必须是皇上本人，而不是任意在世恶魔
+    # （皇后若已继任，扫"任意恶魔"会指错人）
+    huangshang = next((q for q in new["seats"]
+                       if q.get("is_demon") and q["alive"]
+                       and q.get("demon_kind") == "huangshang"), None)
     for po, pn in zip(old["seats"], new["seats"]):
         seat = pn["seat"]
         if pn.get("is_favored") and not po.get("is_favored"):
             lines = ["皇上雨露均沾：你已被转化为宠妃！",
                      "你加入邪恶阵营，失去原角色技能；新技能：每晚可禁足一名玩家"
-                     "（其当晚行动无效，不可连续两晚同一人）。"]
-            if demon:
-                lines.append(f"皇上是 {engine.pub_label(demon)}。")
+                     "（其当晚行动无效，连续两晚同一人无效）。"]
+            if huangshang:
+                lines.append(f"皇上是 {engine.pub_label(huangshang)}。")
             private(new, seat, tag, lines)
         if po.get("is_favored") and not pn.get("is_favored") and pn["alive"]:
             private(new, seat, tag,
@@ -385,6 +400,8 @@ def day_action(room, name, action, params):
     tag = f"天{room['day_number']}"
     for ev in result["events"]:
         announce(room, tag, ev)
+    for note in result.get("notes", []):
+        room["hidden_log"].append(f"{tag}：{note}")
     return _after_day_change(room)
 
 
@@ -396,6 +413,8 @@ def nominate(room, name, nominee):
     tag = f"天{room['day_number']}"
     for ev in result["events"]:
         announce(room, tag, ev)
+    for note in result.get("notes", []):
+        room["hidden_log"].append(f"{tag}：{note}")
     if result.get("proceed_to_vote"):
         eligible = [q["seat"] for q in room["seats"] if q["alive"] or q["ghost_vote"]]
         room["vote_state"] = {"votes": {}, "eligible": eligible}
@@ -426,6 +445,8 @@ def cast_vote(room, name, val):
                  f"，赞成：{names or '无人'}；反对：{no_names or '无人'}")
         for ev in result["events"]:
             announce(room, tag, ev)
+        for note in result.get("notes", []):
+            room["hidden_log"].append(f"{tag}：{note}")
         room["vote_state"] = None
         return _after_day_change(room)
     store.update(room)
@@ -487,58 +508,44 @@ def _announce_end(room):
 # ---------------- 视图 ----------------
 
 def view(room, name=None):
+    """全量视图：整个房间状态原样下发，前端决定显示什么。
+
+    私人局假定没有开发者工具翻网络包的恶意玩家（rules.md 一.11 的保密要求由
+    玩家端的**渲染**负责），换来与说书人模式一致的单一视图路径。此外附带若干
+    派生便利字段（me / night.my_steps / day.open_vote 等），玩家端直接使用。
+    """
     phase = room.get("phase")
-    ended = phase == "ended"
+    out = deepcopy(room)
+    out.pop("_answers", None)
     me = None
     if name:
         me = next((p for p in room["seats"] if p.get("name") == name), None)
+    out["my_seat"] = me["seat"] if me else None
 
-    out = {
-        "id": room["id"],
-        "phase": phase,
-        "player_count": room["player_count"],
-        "night_number": room.get("night_number"),
-        "day_number": room.get("day_number"),
-        "setup_name": room.get("setup_name"),
-        "winner": room.get("winner"),
-        "win_reason": room.get("win_reason"),
-        "announcements": room.get("announcements", []),
-        "my_seat": me["seat"] if me else None,
-        "seats": [],
-    }
-
-    for p in room["seats"]:
-        s = {"seat": p["seat"], "name": p.get("name") or ""}
+    for s in out["seats"]:
+        s["name"] = s.get("name") or ""
         if phase == "lobby":
-            s["ready"] = bool(room["ready"].get(str(p["seat"])))
-        else:
-            s["alive"] = p.get("alive")
-            s["ghost_vote"] = p.get("ghost_vote")
-        if ended:
-            role = ROLE_BY_ID.get(p.get("role") or "")
-            orig = ROLE_BY_ID.get(p.get("original_role") or "")
-            s["role"] = p.get("role")
-            s["role_name"] = role["name"] if role else None
-            s["team"] = role["team"] if role else None
-            if orig and orig is not role:
+            s["ready"] = bool(room["ready"].get(str(s["seat"])))
+        role = ROLE_BY_ID.get(s.get("role") or "")
+        orig = ROLE_BY_ID.get(s.get("original_role") or "")
+        if role:
+            # 现身份优先：转化的宠妃对外（终局揭示）显示「宠妃」，原角色另注
+            disp = ROLE_BY_ID["chongfei"] if s.get("is_favored") else role
+            s["role_name"] = disp["name"]
+            s["team"] = disp["team"]
+            if s.get("is_favored"):
+                s["original_role_name"] = role["name"]
+            elif orig and orig is not role:
                 s["original_role_name"] = orig["name"]
-            s["alignment"] = p.get("alignment")
-        out["seats"].append(s)
 
     if phase not in ("lobby", None, "prepare"):
         out["alive_count"] = engine.alive_count(room)
         out["threshold"] = engine.vote_threshold(room)
 
-    if ended:
-        out["hidden_log"] = room.get("hidden_log", [])
-
     ds = room.get("day_state")
     if phase == "day" and ds:
         out["day"] = {
-            "nominators": ds["nominators"],
-            "nominees": ds["nominees"],
-            "silenced": ds.get("silenced"),
-            "ended": ds.get("ended"),
+            **deepcopy(ds),
             "end_day_votes": room.get("end_day_votes", []),
             "end_day_need": engine.alive_count(room) // 2 + 1,
             "open_vote": None,
@@ -546,7 +553,6 @@ def view(room, name=None):
         nom = ds.get("open_nomination")
         vs = room.get("vote_state")
         if nom and vs:
-            # 票型保密：只公开「已表态人数」，不下发任何人的票向（自己的除外）
             ov = {
                 "nominator": nom["nominator"],
                 "nominee": nom["nominee"],
@@ -584,22 +590,26 @@ def view(room, name=None):
                     "prompt": pend["prompt"], "options": pend["options"]}
 
     if me and phase not in ("lobby", None, "prepare"):
-        role = ROLE_BY_ID[me["role"]]
+        # 身份卡按**现身份**渲染：转化的宠妃看到「宠妃」卡，原角色以备注给出
+        favored = me.get("is_favored")
+        role = ROLE_BY_ID["chongfei"] if favored else ROLE_BY_ID[me["role"]]
         my = {
             "seat": me["seat"], "name": me["name"],
-            "role": me["role"], "role_name": role["name"], "role_title": role["title"],
+            "role": "chongfei" if favored else me["role"],
+            "role_name": role["name"], "role_title": role["title"],
             "team": role["team"], "team_name": TEAM_NAMES[role["team"]],
             "ability": role["ability"],
             "alignment": me["alignment"], "alive": me["alive"],
             "ghost_vote": me["ghost_vote"],
-            "is_favored": me.get("is_favored"),
+            "is_favored": favored,
             "is_demon": me.get("is_demon"),
             "notes": [],
         }
         if me.get("flags", {}).get("duishi"):
             my["notes"].append("苏培盛与你对食：你开局即为爪牙（邪恶阵营），照常收到信息但为邪恶效力")
-        if me.get("is_favored"):
-            my["notes"].append("你已被转化为宠妃：邪恶阵营，失去原技能；每晚可禁足一名玩家")
+        if favored:
+            my["notes"].append(
+                f"原角色：{ROLE_BY_ID[me['role']]['name']}（技能已失去；被三阿哥染指脱离宠妃身份后恢复）")
         if me.get("is_demon") and me["role"] == "huanghou":
             my["notes"].append("你已继任恶魔：每晚行使夜杀")
         if me["alignment"] == "evil":
@@ -612,7 +622,8 @@ def view(room, name=None):
             my["day_actions"] = player_day_actions(room, me)
             my["can_nominate"] = (
                 me["alive"] and not ds.get("ended") and not ds.get("open_nomination")
-                and me["seat"] not in ds["nominators"])
+                and me["seat"] not in ds["nominators"]
+                and ds.get("silenced") != me["seat"])
             my["chatted"] = me["seat"] in ds.get("private_chats", [])
         my["private_log"] = room.get("private_log", {}).get(str(me["seat"]), [])
         out["me"] = my

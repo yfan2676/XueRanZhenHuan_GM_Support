@@ -67,7 +67,8 @@ button.small { padding: 4px 10px; font-size: 12px; }
 .table-wrap { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; justify-content: center; }
 .round-table {
   position: relative;
-  width: 640px; height: 640px;
+  /* --table-size 由 app.js 按人数算（座位多则圆桌大），默认 = 15 人及以下的 640px */
+  width: var(--table-size, 640px); height: var(--table-size, 640px);
   flex: 0 0 auto;
 }
 .table-center {
@@ -246,7 +247,13 @@ button.small { padding: 4px 10px; font-size: 12px; }
 .chip:disabled { opacity: .35; cursor: not-allowed; }
 .chip-note { font-size: 11px; color: var(--danger); }
 .chip.on .chip-note { color: #7a2020; }
-.cure-box { font-size: 13px; color: var(--muted); }
+/* 被宠妃禁足：夜晚步骤清单上的标记 + 当前步骤的提醒 */
+.step-item.voided { opacity: .6; }
+.voided-tag { font-size: 11px; color: var(--danger); margin-left: 6px; white-space: nowrap; }
+.night-warn {
+  margin: 8px 0; padding: 8px 10px; border-radius: 8px; font-size: 13px;
+  color: var(--danger); background: rgba(196, 61, 77, .12); border: 1px solid var(--danger);
+}
 
 .report-grid { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; justify-content: center; }
 .report-grid .side-panel { flex: 1 1 300px; }
@@ -490,3 +497,23 @@ button.danger:hover:not(:disabled) { background: var(--danger); color: #fff; }
 
   .step-item { font-size: 12px; }
 }
+
+/* ---- 全桌一览（说书人常驻座位表：夜晚 / 裁定 / 结算报告） ---- */
+.seat-strip { margin-top: 12px; }
+.strip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-bottom: 1px solid rgba(212, 169, 90, 0.12);
+  font-size: 13px;
+}
+.strip-row:last-child { border-bottom: none; }
+.strip-row.dead { opacity: 0.55; }
+.strip-seat { color: var(--muted); min-width: 34px; }
+.strip-name { min-width: 64px; }
+.strip-role { flex: 1; }
+.strip-role.team-townsfolk { color: var(--townsfolk); }
+.strip-role.team-outsider { color: var(--outsider); }
+.strip-role.team-minion { color: var(--minion); }
+.strip-role.team-demon { color: var(--demon); }
