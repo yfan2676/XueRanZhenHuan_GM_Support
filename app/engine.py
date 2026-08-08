@@ -11,9 +11,12 @@
 - 安陵容毒（夜 n 下）：至 dusk n（覆盖当夜+次日白天）
 - 敦亲王灌酒（天 n）：至 dawn n+1
 - 孙答应连锁全村醉：至 dawn n+1
-- 守护（夜 n）：至 dawn n
 - 一丈红（夜 n 赐）：至 dusk n（次日白天生效）
 - 禁言（天 n）：至 dusk n
+（守护与禁足不是状态：只在当夜结算内生效，用局部变量记录。）
+
+夜晚行动顺序以 docs/rules.md「七、夜晚行动顺序」为唯一权威，
+tests/test_night_order.py 会断言这里的步骤顺序与文档一致。
 """
 
 import math
@@ -204,19 +207,22 @@ def start_game(game):
 
 # ---------------- 夜晚步骤构建 ----------------
 
-def _opt(p, note=""):
+def _opt(p, note="", avoid=False):
     """一个可选目标。
 
     死亡玩家一律照常列出、可以选中：界面不替说书人/玩家做合法性判断，技能照常发动，
     只是在破晓结算时不产生效果（信息类技能则明确回报"无效"）。仅在选项上标注"已死"。
 
-    avoid：仅用于说书人决策步骤上的"🎲 随机"按钮——死者不进随机池（给死人发情报是
-    白给），但依然照常显示、可以手动点选。骰子不做规则判断。
+    avoid：只影响随机（说书人的"🎲 随机"按钮与无说书人模式的机器人共用同一策略，
+    见 docs/decision_maps.md）——死者一律不进随机池，信息类步骤可再传入额外的
+    排除条件（如安陵容不给邪恶阵营、不重复）。被 avoid 的选项依然照常显示、
+    可以手动点选。骰子不做规则判断。
     """
     dead = not p.get("alive", True)
     if dead:
         note = f"已死 · {note}" if note else "已死"
-    return {"seat": p["seat"], "label": pub_label(p), "note": note, "avoid": dead}
+    return {"seat": p["seat"], "label": pub_label(p), "note": note,
+            "avoid": dead or bool(avoid)}
 
 
 def _dead_target(g, rpt, seat, what):
@@ -267,38 +273,69 @@ def build_night_steps(game):
                 return p
         return None
 
+    fav = next((p for p in alive if p["is_favored"]), None)
+
+    # 宠妃怀胎：转化当夜记为第 1 夜，进入第 3 个夜晚时皇上即拿到宝宝，**当夜就能放**。
+    # favored_nights 记的是「已经过完的夜数」，所以今夜是第 favored_nights + 1 夜。
+    if fav and fav["favored_nights"] + 1 >= 3 and not game.get("baby"):
+        game["baby"] = {"type": None, "placed": False}
+        log(game, "宠妃已存在三个夜晚：皇上获得宝宝（类型由说书人决定），今夜即可放置")
+
     if first:
         evil = [p for p in game["seats"] if p["alignment"] == "evil"]
         info = "、".join(label(p) for p in evil)
         steps.append(_step("evil_info", "info", None, "邪恶阵营互认",
                            f"唤醒邪恶阵营互认：{info}", [], count=0))
 
+    # 禁足排在最前：被禁足者今夜的一切行动与信息都不结算，说书人先问宠妃才知道该跳过谁。
+    if fav:
+        steps.append(_step("jinzu", "pick", fav, "宠妃 · 禁足",
+                           "使一名玩家当晚无法行动（连续同一人无效），或无行动",
+                           [_opt(p, "上晚已禁足：连选无效" if p["seat"] == fav["flags"].get("last_jinzu") else "")
+                            for p in everyone if p is not fav], optional=True))
+
     alr = find("anlingrong")
     if alr:
         females = [p for p in everyone
                    if ROLE_BY_ID[p["role"]]["gender"] == "F" and p is not alr]
-        steps.append(_step("alr_info", "pick", alr, "安陵容 · 情报",
-                           "说书人选择一名女性角色告知安陵容（真实信息）",
-                           [_opt(p, ROLE_BY_ID[p["role"]]["name"]) for p in females],
+        # 随机策略（docs/decision_maps.md）：不选死者/邪恶阵营/已告知过的；
+        # 合格者全部告知过后回到真随机（仅仍排除死者），并提示说书人缘由。
+        told = set(alr["flags"].get("alr_told", []))
+
+        def _alr_excluded(p):
+            return p["alignment"] == "evil" or p["seat"] in told
+
+        exhausted = all(not p["alive"] or _alr_excluded(p) for p in females)
+        prompt = "说书人选择一名女性角色告知安陵容（真实信息）"
+        if exhausted and females:
+            prompt += "——合格情报对象已全部告知过，本次随机为真随机"
+        steps.append(_step("alr_info", "pick", alr, "安陵容 · 情报", prompt,
+                           [_opt(p, ROLE_BY_ID[p["role"]]["name"]
+                                 + ("（已告知过）" if p["seat"] in told else ""),
+                                 avoid=not exhausted and _alr_excluded(p))
+                            for p in females],
                            gm=True))
         steps.append(_step("alr_poison", "pick", alr, "安陵容 · 香粉下毒",
                            "选择一名女性角色下毒（至下一个黄昏），或无行动",
                            [_opt(p) for p in females], optional=True))
 
+    # 太医紧跟在安陵容之后、果郡王之前：解毒当晚就能让后续技能（守护、槿汐、小允子……）
+    # 恢复真实结算，这正是"解除后当晚后续行动即生效"这句规则的意义所在。
+    wsc = find("wenshichu")
+    if wsc:
+        steps.append(_step("check", "pick", wsc, "温实初 · 太医",
+                           "查验一名玩家是否中毒/醉酒；若是，结算时再问你解不解",
+                           [_opt(p) for p in everyone if p is not wsc]))
+
+    # 首夜同样唤醒：首夜没有刀，但雨露均沾首夜可用，"免睡"这一半是有意义的。
     gjw = find("guojunwang")
-    if gjw and not first:
+    if gjw:
         lastp = gjw["flags"].get("last_protect")
         steps.append(_step("protect", "pick", gjw, "果郡王 · 守护",
-                           "守护一名玩家（免刀免睡），可守自己，不可连守同一人",
-                           [_opt(p, "上晚已守，不可连守" if p["seat"] == lastp else "")
+                           "守护一名玩家（只免恶魔的刀与侍寝；不挡禁足、宝宝、一丈红、处决），"
+                           "可守自己，连守同一人无效",
+                           [_opt(p, "上晚已守：连守无效" if p["seat"] == lastp else "")
                             for p in everyone], optional=True))
-
-    fav = next((p for p in alive if p["is_favored"]), None)
-    if fav:
-        steps.append(_step("jinzu", "pick", fav, "宠妃 · 禁足",
-                           "使一名玩家当晚无法行动（不可连续同一人），或无行动",
-                           [_opt(p, "上晚已禁足" if p["seat"] == fav["flags"].get("last_jinzu") else "")
-                            for p in everyone if p is not fav], optional=True))
 
     demon = next((p for p in alive if p["is_demon"]), None)
     if demon:
@@ -331,36 +368,6 @@ def build_night_steps(game):
                                "选择一名玩家杀害（可选择自己：自刀传位）",
                                [_opt(p, "自刀传位" if p is demon else "") for p in everyone]))
 
-    yly = find("yelanyi")
-    if yly and not yly["flags"].get("revive_used"):
-        if any(not p["alive"] for p in everyone):
-            steps.append(_step("revive", "pick", yly, "叶澜依 · 你的福气在后头（全局一次）",
-                               "祝福一名死亡玩家，白天复活（技能重置），或无行动",
-                               [_opt(p, "" if not p["alive"] else "尚存活，复活无效")
-                                for p in everyone], optional=True))
-
-    if first:
-        yr = find("yurao")
-        if yr:
-            goods = [p for p in everyone if p["alignment"] == "good" and p is not yr]
-            steps.append(_step("bind", "pick", yr, "玉娆 · 姐妹影分身",
-                               "说书人选择一名善良玩家告知玉娆（其被恶魔夜杀时玉娆陪葬）",
-                               [_opt(p, ROLE_BY_ID[p["role"]]["name"]) for p in goods],
-                               gm=True))
-
-    jx = find("jinxi")
-    if jx:
-        steps.append(_step("jinxi", "pick", jx, "槿汐姑姑 · 打听小道消息",
-                           "选择两名玩家，得知其中是否有恶魔",
-                           [_opt(p) for p in everyone if p is not jx], count=2))
-
-    wsc = find("wenshichu")
-    if wsc:
-        steps.append(_step("check", "pick", wsc, "温实初 · 太医",
-                           "查验一名玩家是否中毒/醉酒（若是，默认为其解除）",
-                           [_opt(p) for p in everyone if p is not wsc],
-                           extras={"cure_toggle": True}))
-
     sag = find("sanage")
     if sag:
         left, right = living_neighbors(game, sag["seat"])
@@ -372,6 +379,48 @@ def build_night_steps(game):
         steps.append(_step("sanage", "pick", sag, "三阿哥 · 染指",
                            "染指左右两边其中一名存活玩家，或无行动（结算给成功/失败手势）",
                            opts, optional=True))
+
+    yly = find("yelanyi")
+    if yly and not yly["flags"].get("revive_used"):
+        if any(not p["alive"] for p in everyone):
+            steps.append(_step("revive", "pick", yly, "叶澜依 · 你的福气在后头（全局一次）",
+                               "祝福一名死亡玩家：破晓复活、仅一次技能全部重置（今夜不行动），或无行动",
+                               [_opt(p, "" if not p["alive"] else "尚存活，复活无效")
+                                for p in everyone], optional=True))
+
+    # 被动信息角色同样进清单：面板即完整唤醒清单（内容在结算时生成，此处只确认唤醒）。
+    if first:
+        hb = find("huanbi")
+        if hb:
+            steps.append(_step("huanbi_info", "info", hb, "浣碧 · 首席丫鬟（被动）",
+                               "唤醒浣碧：告知恶魔与最近爪牙的间距（内容在结算报告中生成）",
+                               [], count=0))
+        jf = find("jingfei")
+        if jf:
+            steps.append(_step("jingfei_info", "info", jf, "敬妃 · 砖妃数砖（被动）",
+                               "唤醒敬妃：告知场上非男性角色数量（内容在结算报告中生成）",
+                               [], count=0))
+
+    if first:
+        yr = find("yurao")
+        if yr:
+            goods = [p for p in everyone if p["alignment"] == "good" and p is not yr]
+            steps.append(_step("bind", "pick", yr, "玉娆 · 姐妹影分身",
+                               "说书人选择一名善良玩家告知玉娆（其被恶魔夜杀时玉娆陪葬）",
+                               [_opt(p, ROLE_BY_ID[p["role"]]["name"]) for p in goods],
+                               gm=True))
+
+    xyz = find("xiaoyunzi")
+    if xyz:
+        steps.append(_step("xiaoyunzi_info", "info", xyz, "小允子 · 邻座情报（被动）",
+                           "唤醒小允子：告知左右存活邻座是否同一阵营（内容在结算报告中生成）",
+                           [], count=0))
+
+    jx = find("jinxi")
+    if jx:
+        steps.append(_step("jinxi", "pick", jx, "槿汐姑姑 · 打听小道消息",
+                           "选择两名玩家，得知其中是否有恶魔",
+                           [_opt(p) for p in everyone if p is not jx], count=2))
 
     hf = find("huafei")
     if hf:
@@ -577,7 +626,8 @@ def _run_night(g, answers, rpt):
         if not s or not s["collected"] or s["collected"].get("no_action"):
             return None
         if s["seat"] in voided:
-            rpt["notes"].append(f"{s['title']}：行动者被禁足，行动无效")
+            rpt["notes"].append(
+                f"{s['title']}：{pub_label(get_p(g, s['seat']))} 被宠妃禁足，今夜行动不结算")
             return None
         return s
 
@@ -618,27 +668,35 @@ def _run_night(g, answers, rpt):
                     rpt["notes"].append(f"年羹尧带走 {pub_label(get_p(g, int(tgt)))}")
                     defer_kill(int(tgt), "ability")
 
-    # 1. 宠妃禁足（先行，决定 voided）
+    # 1. 宠妃禁足（最先结算：voided 决定今夜谁的行动与信息一律不生效）
+    #    禁足只锁"当晚行动"，不是保护——被禁足者照样会被刀、会被一丈红标记。
     s = collected("jinzu")
     if s:
         fav = actor(s)
         t = targets(s)[0]
         if is_impaired(g, fav):
             rpt["notes"].append(f"宠妃醉/毒：禁足无效 {impair_tag(g, fav)}")
-        elif _dead_target(g, rpt, t, "宠妃禁足"):
-            fav["flags"]["last_jinzu"] = t
-            fav["flags"]["last_jinzu"] = t
-            rpt["notes"].append(f"宠妃禁足 {pub_label(get_p(g, t))}：其今晚行动无效")
+        elif t == fav["flags"].get("last_jinzu"):
+            rpt["notes"].append("宠妃连续两晚禁足同一人：禁足无效（规则禁止）")
+        else:
+            fav["flags"]["pending_last_jinzu"] = t
+            if not _dead_target(g, rpt, t, "宠妃禁足"):
+                voided.add(t)
+                rpt["notes"].append(
+                    f"宠妃禁足 {pub_label(get_p(g, t))}：其今夜的行动与信息一律不结算")
 
     # 2. 安陵容
     s = collected("alr_info")
     if s:
         alr = actor(s)
         t = get_p(g, targets(s)[0])
+        told = alr["flags"].setdefault("alr_told", [])
+        if t["seat"] not in told:
+            told.append(t["seat"])
         rpt["packets"].append({
             "seat": alr["seat"], "role": "anlingrong", "kind": "alr_info",
             "lines": [f"告知安陵容：{pub_label(t)} 是 {ROLE_BY_ID[t['role']]['name']}"],
-            "malfunction": False})
+            "malfunction": is_impaired(g, alr)})
     s = collected("alr_poison")
     if s:
         alr = actor(s)
@@ -651,7 +709,38 @@ def _run_night(g, answers, rpt):
             add_status(get_p(g, t), "poisoned", "anlingrong", "dusk", n)
             rpt["notes"].append(f"安陵容对 {pub_label(get_p(g, t))} 下毒（至下个黄昏）")
 
-    # 3. 果郡王守护
+    # 3. 温实初查验 / 解毒（排在果郡王之前：解毒后，今夜后续技能按"已恢复"结算）
+    #    两段式：先出查验结果，再由温实初本人决定解不解——不知道结果就得先勾选是没道理的。
+    s = collected("check")
+    if s and actor(s)["alive"]:
+        wsc = actor(s)
+        t = targets(s)[0]
+        tp = get_p(g, t)
+        impaired_t = is_impaired(g, tp)
+        lines = [f"{pub_label(tp)} {'处于' if impaired_t else '不处于'}中毒/醉酒状态"]
+        if is_impaired(g, wsc):
+            lines.append("温实初自身醉/毒：查验结果可为假，解除无效")
+        elif impaired_t:
+            cure = _need(answers, f"cure_{wsc['seat']}_{n}",
+                         f"温实初查出 {pub_label(tp)} 处于中毒/醉酒状态，是否为其解除？",
+                         [{"value": "yes", "label": f"解除 {pub_label(tp)} 的中毒/醉酒"},
+                          {"value": "no", "label": "不解除（留着这条信息）"}],
+                         gm=False)
+            if cure == "yes":
+                tp["statuses"] = [st for st in tp["statuses"]
+                                  if st["type"] not in ("drunk", "poisoned")]
+                if is_impaired(g, tp):
+                    lines.append("注意：其醉酒来自浣碧邻座果郡王的座位效应，无法解除")
+                else:
+                    lines.append("已为其解除中毒/醉酒状态（今夜后续技能按已恢复结算）")
+                    rpt["notes"].append(f"温实初解除了 {pub_label(tp)} 的异常状态")
+            else:
+                lines.append("你选择不解除")
+        rpt["packets"].append({"seat": wsc["seat"], "role": "wenshichu",
+                               "kind": "check", "ctx": {"target": t},
+                               "lines": lines, "malfunction": is_impaired(g, wsc)})
+
+    # 4. 果郡王守护
     protected = set()
     s = collected("protect")
     if s:
@@ -668,7 +757,7 @@ def _run_night(g, answers, rpt):
             gjw["flags"]["pending_last_protect"] = t
             rpt["notes"].append(f"果郡王守护 {pub_label(get_p(g, t))}（免刀免睡）")
 
-    # 4. 雨露均沾
+    # 5. 雨露均沾
     # yulu_success 只记录「侍寝成功」的目标，供三阿哥捉奸判定使用。
     # 侍寝失败（目标为男性角色 / 被果郡王免睡 / 皇上醉毒）不构成捉奸：
     # 两人各自失败，无人死亡（例如两人同晚都挑了男性角色）。
@@ -706,7 +795,7 @@ def _run_night(g, answers, rpt):
                                    "malfunction": False})
             log(g, f"雨露均沾：{pub_label(tp)} 成为宠妃")
 
-    # 5. 宝宝放置
+    # 6. 宝宝放置
     s = collected("baby")
     if s and g.get("baby") and not g["baby"]["placed"]:
         t = targets(s)[0]
@@ -727,7 +816,7 @@ def _run_night(g, answers, rpt):
                 rpt["notes"].append(f"狸猫宝宝：宠妃 {pub_label(fav)} 被炸死（狸猫换太子）")
                 defer_kill(fav["seat"], "baby")
 
-    # 6. 恶魔杀（此处只裁定结果，死亡与身份变更统一推迟到破晓）
+    # 7. 恶魔杀（此处只裁定结果，死亡与身份变更统一推迟到破晓）
     # demon_choice 记录皇上系恶魔当晚「沾」到的刀口（无论是否命中），供三阿哥捉奸判定使用
     demon_choice = None
     s = collected("kill")
@@ -753,7 +842,19 @@ def _run_night(g, answers, rpt):
                          f"太后选择了 {pub_label(get_p(g, t1))} 与 {pub_label(get_p(g, t2))}，几人死亡？", opts)
             chosen = [] if pick == "none" else allowed if pick == "both" else [int(pick)]
             for t in chosen:
-                defer_kill(t, "demon_kill", killer=d)
+                tp = get_p(g, t)
+                # 反杀按"凶手是不是皇后"判定：继任太后线的皇后同样触发（rules.md 甄嬛条目）
+                if (tp["role"] == "zhenhuan" and not tp.get("is_favored")
+                        and d["role"] == "huanghou" and not is_impaired(g, tp)):
+                    deferred.append({"kind": "zhenhuan_counter",
+                                     "seat": t, "demon": d["seat"]})
+                    rpt["notes"].append(
+                        f"甄嬛反杀！{pub_label(tp)} 将于破晓成为女皇（邪恶新领袖，每晚一刀）；皇后技能永久失效")
+                else:
+                    if (tp["role"] == "zhenhuan" and d["role"] == "huanghou"
+                            and is_impaired(g, tp)):
+                        rpt["notes"].append("甄嬛醉/毒：反杀失效，正常死亡")
+                    defer_kill(t, "demon_kill", killer=d)
         else:
             t = targets(s)[0]
             tp = get_p(g, t)
@@ -778,17 +879,19 @@ def _run_night(g, answers, rpt):
                 elif t in protected:
                     rpt["notes"].append(f"{pub_label(tp)} 被果郡王守护：今夜无人死于恶魔之手")
                 elif (tp["role"] == "zhenhuan" and not tp.get("is_favored")
-                      and kind in ("huangshang", "basic") and not is_impaired(g, tp)):
+                      and (kind == "huangshang" or d["role"] == "huanghou")
+                      and not is_impaired(g, tp)):
                     deferred.append({"kind": "zhenhuan_counter",
                                      "seat": t, "demon": d["seat"]})
                     rpt["notes"].append(
                         f"甄嬛反杀！{pub_label(tp)} 将于破晓成为女皇（邪恶新领袖，每晚一刀）；皇后技能永久失效")
                 else:
-                    if tp["role"] == "zhenhuan" and is_impaired(g, tp):
+                    if (tp["role"] == "zhenhuan" and is_impaired(g, tp)
+                            and (kind == "huangshang" or d["role"] == "huanghou")):
                         rpt["notes"].append("甄嬛醉/毒：反杀失效，正常死亡")
                     defer_kill(t, "demon_kill", killer=d)
 
-    # 7. 三阿哥染指
+    # 8. 三阿哥染指
     s = collected("sanage")
     if s:
         sag = actor(s)
@@ -819,8 +922,9 @@ def _run_night(g, answers, rpt):
                                        "kind": "sanage", "ctx": {"target": t},
                                        "lines": ["手势：成功"], "malfunction": False})
                 log(g, f"{pub_label(tp)} 被三阿哥染指，脱离宠妃身份")
+            # "女性爪牙"按阵营判定：对食转恶的槿汐同样给失败手势（rules.md 三阿哥条目）
             elif (r["gender"] == "M" or tp["role"] in ("taihou", "qifei", "longyue")
-                  or (r["team"] == "minion" and r["gender"] == "F")):
+                  or (r["gender"] == "F" and tp["alignment"] == "evil")):
                 rpt["packets"].append({"seat": sag["seat"], "role": "sanage",
                                        "kind": "sanage", "ctx": {"target": t},
                                        "lines": [f"手势：失败（目标 {pub_label(tp)} 不可染指）"],
@@ -831,7 +935,8 @@ def _run_night(g, answers, rpt):
                                        "lines": [f"手势：成功（目标 {pub_label(tp)}，无额外效果）"],
                                        "malfunction": False})
 
-    # 8. 叶澜依复活
+    # 9. 叶澜依复活（此处只裁定成败；复活在破晓、死亡统一结算之后落地，
+    #    被复活者今夜没有任何步骤，信息也不重发——见 rules.md 叶澜依条目）
     s = collected("revive")
     if s:
         yly = actor(s)
@@ -844,15 +949,11 @@ def _run_night(g, answers, rpt):
             elif tp["alive"]:
                 rpt["notes"].append(f"{pub_label(tp)} 已存活，复活无效")
             else:
-                tp["alive"] = True
-                tp["ghost_vote"] = True
-                tp["flags"] = {}
-                tp["statuses"] = []
-                rpt["revived"].append({"seat": t, "name": tp["name"]})
-                rpt["notes"].append(f"叶澜依祝福：{label(tp)} 白天复活（技能重置）")
-                log(g, f"叶澜依复活了 {pub_label(tp)}")
+                deferred.append({"kind": "revive", "seat": t})
+                rpt["notes"].append(
+                    f"叶澜依祝福：{label(tp)} 将于破晓复活（仅一次技能全部重置，今夜不行动）")
 
-    # 9. 信息类（死亡结算后）；被禁足者不给信息
+    # 10. 信息类（浣碧/敬妃/玉娆/小允子/槿汐）；被禁足者不给信息
     def passive_ok(p):
         if p["seat"] in voided:
             rpt["notes"].append(f"{label(p)} 被禁足：今晚不结算其信息")
@@ -920,29 +1021,7 @@ def _run_night(g, answers, rpt):
                           f"{'有' if has_demon else '没有'}恶魔{align_note}"],
                 "malfunction": is_impaired(g, jx)})
 
-    s = collected("check")
-    if s:
-        wsc = actor(s)
-        if wsc["alive"]:
-            t = targets(s)[0]
-            tp = get_p(g, t)
-            impaired_t = is_impaired(g, tp)
-            lines = [f"{pub_label(tp)} {'处于' if impaired_t else '不处于'}中毒/醉酒状态"]
-            if is_impaired(g, wsc):
-                lines.append("温实初自身醉/毒：查验结果可为假，解除无效")
-            elif impaired_t and s["collected"].get("cure", True):
-                tp["statuses"] = [st for st in tp["statuses"]
-                                  if st["type"] not in ("drunk", "poisoned")]
-                if is_impaired(g, tp):
-                    lines.append("注意：其醉酒来自浣碧邻座果郡王的座位效应，无法解除")
-                else:
-                    lines.append("已为其解除中毒/醉酒状态")
-                    rpt["notes"].append(f"温实初解除了 {pub_label(tp)} 的异常状态")
-            rpt["packets"].append({"seat": wsc["seat"], "role": "wenshichu",
-                                   "kind": "check", "ctx": {"target": t},
-                                   "lines": lines, "malfunction": is_impaired(g, wsc)})
-
-    # 10. 华妃一丈红
+    # 11. 华妃一丈红
     s = collected("huafei")
     if s:
         hf = actor(s)
@@ -958,7 +1037,7 @@ def _run_night(g, answers, rpt):
                 add_status(get_p(g, t), "marked", "huafei", "dusk", n)
                 rpt["notes"].append(f"华妃赐 {pub_label(get_p(g, t))} 一丈红：次日其发起提名即暴毙")
 
-    # 11. 破晓：所有夜晚技能结算完毕后，统一处理当夜死亡与身份变更
+    # 12. 破晓：所有夜晚技能结算完毕后，统一处理当夜死亡与身份变更
     _apply_dawn(g, rpt, deferred)
 
     check_win(g, rpt)
@@ -994,6 +1073,18 @@ def _apply_dawn(g, rpt, deferred):
                        "alignment": "evil", "role": "nvhuang"})
             log(g, f"甄嬛反杀：{pub_label(zh)} 成为女皇；皇后技能永久失效")
 
+        elif kind == "revive":
+            # 复活最后落地（revive 在步骤 9 才入队，天然排在所有刀之后）：
+            # 死亡先结算，被复活者不会被今夜的刀再次带走
+            tp = get_p(g, item["seat"])
+            if not tp["alive"]:
+                tp["alive"] = True
+                tp["ghost_vote"] = True
+                tp["flags"] = {}
+                tp["statuses"] = []
+                rpt["revived"].append({"seat": tp["seat"], "name": tp["name"]})
+                log(g, f"叶澜依复活了 {pub_label(tp)}（仅一次技能重置）")
+
         elif kind == "tsh_succession":
             demon, sp = get_p(g, item["seat"]), get_p(g, item["successor"])
             if not sp["alive"]:
@@ -1011,19 +1102,20 @@ def _apply_dawn(g, rpt, deferred):
 def _commit_night(g):
     n = g["night_number"]
     g["pending_night_events"] = []
-    # 守护记录
+    # 守护 / 禁足记录：本夜指了谁就记下，没指就清空（"不可连续同一人"只锁相邻两夜）
     for p in g["seats"]:
         if "pending_last_protect" in p["flags"]:
             p["flags"]["last_protect"] = p["flags"].pop("pending_last_protect")
         elif p["role"] == "guojunwang":
             p["flags"].pop("last_protect", None)
-    # 宠妃怀胎计数
+        if "pending_last_jinzu" in p["flags"]:
+            p["flags"]["last_jinzu"] = p["flags"].pop("pending_last_jinzu")
+        elif p["is_favored"]:
+            p["flags"].pop("last_jinzu", None)
+    # 宠妃怀胎计数（宝宝的发放时点在 build_night_steps：满第 3 夜当夜即可放置）
     for p in g["seats"]:
         if p["is_favored"] and p["alive"]:
             p["favored_nights"] += 1
-            if p["favored_nights"] >= 3 and not g.get("baby"):
-                g["baby"] = {"type": None, "placed": False}
-                log(g, f"宠妃已存在三个夜晚：皇上获得宝宝（类型由说书人决定）")
     prune_statuses(g, "dawn", n)
     g["night_state"] = None
     if g.get("winner"):
@@ -1083,12 +1175,33 @@ def _mark_used(ds, seat, action):
     ds["used_actions"].setdefault(str(seat), []).append(action)
 
 
+def _accuse_hits(t, guess) -> bool:
+    """祺贵人检举是否猜中：以**现身份**为准，原角色一律算错。
+
+    被雨露均沾转化的宠妃、甄嬛反杀上位的女皇、太上皇传位产生的新皇上，都已经不是原来
+    那个角色了——检举"她是叶澜依"应当算猜错，只有猜中"宠妃"才算对（见 rules.md）。
+    """
+    if t.get("is_favored"):
+        return guess == "chongfei"
+    return t["role"] == guess
+
+
+def _flush_day_notes(game, result):
+    """白天产生的说书人备注统一落进备忘（保密）。
+
+    events 是公开事件（两种模式都会广播给玩家）；notes 只进说书人备忘/隐藏日志。
+    玩家该听到的必须显式放进 events——保密是默认，公开是刻意为之（rules.md 一.11）。
+    """
+    memo(game, f"白天{game['day_number']}", result.get("notes") or [])
+    return result
+
+
 def day_action(game, seat, action, params):
     if game.get("phase") != "day":
         raise ValueError("当前不在白天")
     ds = game["day_state"]
     p = get_p(game, seat)
-    result = {"events": []}
+    result = {"events": [], "notes": []}
 
     if action == "private_chat":
         if seat in ds["private_chats"]:
@@ -1105,30 +1218,33 @@ def day_action(game, seat, action, params):
     if action == "force_drunk":
         t = get_p(game, int(params["target"]))
         _mark_used(ds, seat, action)
+        # 公开事件在生效/失效两种情况下必须一字不差，否则当场暴露敦亲王的醉/毒状态
+        result["events"].append(f"敦亲王把酒言欢：{pub_label(t)} 被灌醉一天一夜")
         if is_impaired(game, p):
-            result["events"].append(f"敦亲王自身醉/毒：灌酒无效（但仍公开喊出台词）")
+            result["notes"].append("敦亲王自身醉/毒：灌酒实际无效（台词与公告照常）")
         else:
             add_status(t, "drunk", "dunqinwang", "dawn", game["night_number"] + 1)
-            result["events"].append(f"敦亲王灌酒：{pub_label(t)} 醉酒一天一夜")
         log(game, result["events"][-1])
 
     elif action == "accuse":
         t = get_p(game, int(params["target"]))
         guess = params["role_guess"]
         _mark_used(ds, seat, action)
+        # 公开只播报检举宣言；对/错由当夜死亡揭晓——立刻公告结果会让
+        # 醉/毒时的"无事发生"当场暴露祺贵人的状态（见 decision_maps.md §7）
+        result["events"].append(
+            f"祺贵人公开检举：{pub_label(t)} 是 {ROLE_BY_ID[guess]['name']}")
         if is_impaired(game, p):
-            result["events"].append("祺贵人醉/毒：检举无事发生（对错均无效）")
+            result["notes"].append("祺贵人醉/毒：检举无事发生（对错均无效，今夜无相应死亡）")
         else:
-            correct = t["role"] == guess or t["original_role"] == guess
-            if correct:
+            if _accuse_hits(t, guess):
                 game["pending_night_events"].append({"type": "qiguiren_correct"})
-                result["events"].append(
-                    f"祺贵人检举 {pub_label(t)} 是 {ROLE_BY_ID[guess]['name']}：猜对了！"
-                    "今夜将随机死亡一名玩家（结算时说书人选择）")
+                result["notes"].append(
+                    f"祺贵人猜对（{pub_label(t)} 确为 {ROLE_BY_ID[guess]['name']}）："
+                    "今夜将随机死亡一名玩家（结算时选择）")
             else:
                 game["pending_night_events"].append({"type": "qiguiren_wrong"})
-                result["events"].append(
-                    f"祺贵人检举 {pub_label(t)} 是 {ROLE_BY_ID[guess]['name']}：猜错了，祺贵人今夜暴毙")
+                result["notes"].append("祺贵人猜错：今夜暴毙")
         log(game, result["events"][-1])
 
     elif action == "silence":
@@ -1160,7 +1276,7 @@ def day_action(game, seat, action, params):
 
     else:
         raise ValueError("未知行动")
-    return result
+    return _flush_day_notes(game, result)
 
 
 def _execute(game, seat, result):
@@ -1177,12 +1293,15 @@ def _execute(game, seat, result):
         log(game, game["win_reason"])
         return
     if p["role"] == "longyue" and not p.get("is_favored"):
-        result["events"].append("胧月醉/毒时被处决：不触发阵营失败")
+        # 处决照常进行、公告如常：这条只有说书人该知道，公告会同时暴露角色与醉/毒状态
+        result.setdefault("notes", []).append("胧月醉/毒时被处决：不触发阵营失败")
 
     rpt = {"deaths": [], "revived": [], "packets": [], "notes": []}
     _kill(game, rpt, seat, "execution")
-    result["events"].extend(rpt["notes"])
-    memo(game, f"白天{game['day_number']}", rpt["notes"])
+    # 连锁死亡（处决者本人之外）是公开事实；结算细节只进备注
+    for d in rpt["deaths"][1:]:
+        result["events"].append(f"死亡：{d['seat']}号 {d['name']}")
+    result.setdefault("notes", []).extend(rpt["notes"])
     ds["execution_done"] = True
     ds["ended"] = True
     check_win(game)
@@ -1201,12 +1320,14 @@ def nominate(game, nominator, nominee):
     np_, ne = get_p(game, nominator), get_p(game, nominee)
     if not np_["alive"] or not ne["alive"]:
         raise ValueError("提名者与被提名者都必须存活")
+    if has_status(np_, "silenced"):
+        raise ValueError(f"{pub_label(np_)} 被齐妃禁言：今日不得提名（仍可投票）")
     if nominator in ds["nominators"]:
         raise ValueError(f"{pub_label(np_)} 今天已提名过")
     if nominee in ds["nominees"]:
         raise ValueError(f"{pub_label(ne)} 今天已被提名过")
 
-    result = {"events": [], "proceed_to_vote": False}
+    result = {"events": [], "proceed_to_vote": False, "notes": []}
     ds["nominators"].append(nominator)
 
     # 华妃一丈红：提名者暴毙
@@ -1219,9 +1340,11 @@ def nominate(game, nominator, nominee):
         # 走连锁（不算处决）：狂徒/孙答应/年羹尧等
         np_["alive"] = True  # 重置后走统一 kill 流程
         _kill(game, rpt, nominator, "ability")
-        result["events"].extend(rpt["notes"])
+        for d in rpt["deaths"][1:]:
+            result["events"].append(f"死亡：{d['seat']}号 {d['name']}")
+        result["notes"].extend(rpt["notes"])
         check_win(game)
-        return result
+        return _flush_day_notes(game, result)
 
     ds["nominees"].append(nominee)
 
@@ -1230,21 +1353,22 @@ def nominate(game, nominator, nominee):
             and not ne["flags"].get("chunyuan_spent")):
         ne["flags"]["chunyuan_spent"] = True
         if is_impaired(game, ne):
-            result["events"].append("纯元皇后醉/毒：首次被提名不触发（技能已消耗），正常进入投票")
+            # 不触发时对外静默（官方处女裁定）：公告会白白暴露纯元的身份与状态
+            result["notes"].append("纯元皇后醉/毒：首次被提名不触发（技能已消耗），照常进入投票")
         elif ROLE_BY_ID[np_["role"]]["team"] == "townsfolk":
             result["events"].append(
                 f"白月光显灵！提名者 {pub_label(np_)} 是村民 → 立即被处决，当天直接入夜")
             log(game, f"纯元皇后触发：{label(np_)} 被处决")
             _execute(game, nominator, result)
-            return result
+            return _flush_day_notes(game, result)
         else:
-            result["events"].append("纯元皇后首次被提名，但提名者不是村民：无事发生（技能已消耗），进入投票")
+            result["notes"].append("纯元皇后首次被提名，但提名者不是村民：无事发生（技能已消耗），照常进入投票")
 
     ds["open_nomination"] = {"nominator": nominator, "nominee": nominee}
     result["proceed_to_vote"] = True
     result["threshold"] = vote_threshold(game)
     log(game, f"{pub_label(np_)} 提名 {pub_label(ne)}")
-    return result
+    return _flush_day_notes(game, result)
 
 
 def vote(game, votes):
@@ -1267,7 +1391,8 @@ def vote(game, votes):
     passed = len(valid) >= threshold
     ds["nominations"].append({**nom, "votes": valid, "passed": passed})
     ds["open_nomination"] = None
-    result = {"events": [], "votes": len(valid), "threshold": threshold, "passed": passed}
+    result = {"events": [], "notes": [],
+              "votes": len(valid), "threshold": threshold, "passed": passed}
     if ghost_spent:
         result["events"].append(
             "消耗幽灵票：" + "、".join(pub_label(get_p(game, s)) for s in ghost_spent))
@@ -1280,7 +1405,7 @@ def vote(game, votes):
         result["events"].append(
             f"{len(valid)} 票 < 门槛 {threshold}：{pub_label(ne)} 不死，白天继续")
         log(game, f"投票未过（{len(valid)}/{threshold}）：{pub_label(ne)} 存活")
-    return result
+    return _flush_day_notes(game, result)
 
 
 def end_day(game):

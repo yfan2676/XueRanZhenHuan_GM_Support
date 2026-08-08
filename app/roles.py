@@ -11,7 +11,7 @@ ROLES = [
     {"id": "jinxi", "name": "槿汐姑姑", "title": "打听小道消息", "team": "townsfolk", "gender": "F", "non_male": True,
      "ability": "每晚选择两名玩家，得知其中是否有恶魔乔装。苏培盛在场时对食，开局即成为爪牙。"},
     {"id": "guojunwang", "name": "果郡王", "title": "守护", "team": "townsfolk", "gender": "M", "non_male": False,
-     "ability": "每晚守护一人（免刀免睡），可守自己，不可连守同一人。"},
+     "ability": "每晚守护一人（免刀免睡），可守自己；连守同一人无效。"},
     {"id": "wenshichu", "name": "温实初", "title": "太医", "team": "townsfolk", "gender": "M", "non_male": True,
      "ability": "每晚查验一名玩家是否中毒/醉酒，若是可为其解除。"},
     {"id": "qiguiren", "name": "祺贵人", "title": "瓜六", "team": "townsfolk", "gender": "F", "non_male": True,
@@ -33,10 +33,10 @@ ROLES = [
     {"id": "xiaoyunzi", "name": "小允子", "title": "有些功夫在身上", "team": "townsfolk", "gender": "M", "non_male": False,
      "ability": "每晚得知左右存活邻座是否同一阵营。"},
     {"id": "yelanyi", "name": "叶澜依", "title": "异域妃子", "team": "townsfolk", "gender": "F", "non_male": True,
-     "ability": "夜晚祝福一名死亡玩家，白天复活并重置技能（全局一次）。"},
+     "ability": "夜晚祝福一名死亡玩家：破晓复活、仅一次技能重置，当夜不行动（全局一次）。"},
     # ---- 外来者 ----
     {"id": "qifei", "name": "齐妃", "title": "翠果，打烂她的嘴", "team": "outsider", "gender": "F", "non_male": True,
-     "ability": "每个白天禁言一名玩家（不可连续同一人）；违规说话者被直接处决并入夜。"},
+     "ability": "每个白天禁言一名玩家（不可连续同一人）；被禁言者不得提名，违规说话者被直接处决并入夜。"},
     {"id": "longyue", "name": "胧月", "title": "皇女", "team": "outsider", "gender": "F", "non_male": True,
      "ability": "若因处决而死，你的阵营失败。"},
     {"id": "sundaying", "name": "孙答应", "title": "后妃", "team": "outsider", "gender": "F", "non_male": True,
@@ -62,9 +62,14 @@ ROLES = [
     {"id": "taishanghuang", "name": "回魂太上皇", "title": "心狠手辣", "team": "demon", "gender": "M", "non_male": False,
      "ability": "每晚杀一人，可自刀：上个白天与说书人私聊过的一名玩家继任皇上。"},
     # ---- 衍生身份（不可在备局时分配）----
+    # accusable：可以作为祺贵人「检举」的猜测对象。被转化/上位的玩家，现身份才是正确答案，
+    # 猜其原角色一律算错（见 rules.md 祺贵人条目）。
     {"id": "nvhuang", "name": "女皇", "title": "甄嬛上位", "team": "demon", "gender": "F", "non_male": True,
-     "virtual": True,
+     "virtual": True, "accusable": True,
      "ability": "每晚杀一名玩家。不可被三阿哥染指（违者处死）；皇后技能失效，女皇死亡即善良获胜。"},
+    {"id": "chongfei", "name": "宠妃", "title": "雨露均沾", "team": "minion", "gender": "F", "non_male": True,
+     "virtual": True, "accusable": True,
+     "ability": "被皇上侍寝转化：失去原技能，改为每晚禁足一人（连续同一人无效）；存在满三夜后皇上获得宝宝。"},
 ]
 
 ROLE_BY_ID = {r["id"]: r for r in ROLES}

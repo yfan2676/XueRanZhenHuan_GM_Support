@@ -173,6 +173,10 @@ def set_roles(gid: str, body: RolesBody):
     unknown = [r for r in body.roles if r not in ROLE_BY_ID]
     if unknown:
         raise HTTPException(400, f"未知角色: {unknown}")
+    virtual = [r for r in body.roles if ROLE_BY_ID[r].get("virtual")]
+    if virtual:
+        names = "、".join(ROLE_BY_ID[r]["name"] for r in virtual)
+        raise HTTPException(400, f"{names} 为衍生身份，不可在备局时分配（rules.md 板子配置）")
     dup = [r for r in set(body.roles) if body.roles.count(r) > 1]
     if dup:
         names = "、".join(ROLE_BY_ID[r]["name"] for r in dup)
@@ -288,7 +292,6 @@ class RoomNightBody(BaseModel):
     step_id: str
     no_action: bool = False
     targets: list[int] = []
-    cure: bool | None = None
 
 
 class RoomDecisionBody(BaseModel):
@@ -349,7 +352,7 @@ async def room_ready(rid: str, body: RoomReadyBody):
 @app.post("/api/rooms/{rid}/night/action")
 async def room_night_action(rid: str, body: RoomNightBody):
     room = _wrap(auto.night_action, _room_or_404(rid), body.name,
-                 body.step_id, body.no_action, body.targets, body.cure)
+                 body.step_id, body.no_action, body.targets)
     return auto.view(room, body.name)
 
 

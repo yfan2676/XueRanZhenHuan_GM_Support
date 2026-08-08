@@ -1,4 +1,8 @@
-/* 血战甄嬛传 —— 无说书人模式玩家端 */
+/* 血战甄嬛传 —— 无说书人模式玩家端
+
+   视图契约：/api/rooms/{id}/view 下发**全量**房间状态（含所有人的身份与隐藏日志），
+   保密由这里的渲染负责——只渲染属于当前玩家的信息（me / my_steps / 公告 / 私信），
+   其他人的身份与 hidden_log 只在终局揭示。私人局，假定没有翻网络包的玩家。 */
 
 const app = document.getElementById("app");
 const LS_KEY = "zq_play";
@@ -9,7 +13,7 @@ const state = {
   name: null,          // 我的玩家名
   view: null,          // 最新视图
   lastRaw: "",         // 变更检测
-  sel: {},             // 夜晚步骤选择缓存 {key: {targets:[], cure:true}}
+  sel: {},             // 夜晚步骤选择缓存 {key: {targets:[]}}
   selNight: null,      // sel 对应的夜数
   ui: { joinName: "", openAction: null, actTarget: null, actGuess: "", nomTarget: null },
   timer: null,
@@ -150,7 +154,7 @@ function renderEntry() {
         h("p", { class: "hint", style: "text-align:left;margin-bottom:10px" },
           "只需选择人数；角色板子与身份在全员就绪后自动分配，机器人担任说书人"),
         h("div", { class: "count-grid", style: "margin:10px 0" },
-          ...range(state.meta?.min_players ?? 7, state.meta?.max_players ?? 15).map((n) =>
+          ...range(state.meta?.min_players ?? 7, state.meta?.max_players ?? 16).map((n) =>
             h("button", { class: "count-btn small-count", onclick: () => createRoom(n) }, String(n))))),
       h("p", { class: "hint" },
         h("a", { href: "/", style: "color:var(--gold-dim)" }, "← 返回说书人助手模式"))),
@@ -376,7 +380,7 @@ function nightPanel(v) {
 
 function stepForm(v, s) {
   const key = s.id;
-  const sel = state.sel[key] ||= { targets: [], cure: true };
+  const sel = state.sel[key] ||= { targets: [] };
   const box = h("div", { class: `step-box ${s.done ? "done" : ""}` },
     h("div", { class: "step-title" }, s.title, s.done ? " ✓ 已提交（可修改）" : ""),
     h("div", { class: "night-prompt" }, s.prompt));
@@ -398,14 +402,6 @@ function stepForm(v, s) {
         }, o.label, o.note ? h("span", { class: "chip-note" }, ` ${o.note}`) : null);
       })));
   }
-  if (s.extras?.cure_toggle) {
-    box.append(h("label", { class: "cure-box" },
-      h("input", {
-        type: "checkbox", checked: sel.cure,
-        onchange: (e) => { sel.cure = e.target.checked; },
-      }),
-      " 若目标处于中毒/醉酒，为其解除"));
-  }
   const btns = h("div", { class: "actions", style: "justify-content:flex-start;margin-top:8px" });
   btns.append(h("button", {
     class: "primary",
@@ -420,14 +416,13 @@ function stepForm(v, s) {
 }
 
 async function sendNightAction(s, noAction) {
-  const sel = state.sel[s.id] || { targets: [], cure: true };
+  const sel = state.sel[s.id] || { targets: [] };
   try {
     const v = await api(`/api/rooms/${state.room}/night/action`, {
       method: "POST",
       body: JSON.stringify({
         name: state.name, step_id: s.id,
         no_action: noAction, targets: noAction ? [] : sel.targets,
-        cure: sel.cure,
       }),
     });
     setView(v, true);
@@ -533,7 +528,8 @@ function dayActionRow(v, a) {
         onchange: (e) => { state.ui.actGuess = e.target.value; },
       }, h("option", { value: "" }, "——选择检举的角色——"));
       for (const r of state.meta?.roles || []) {
-        if (r.virtual) continue;
+        // 宠妃/女皇是转化出来的现身份，检举必须能猜中它们（猜原角色一律算错）
+        if (r.virtual && !r.accusable) continue;
         const opt = h("option", { value: r.id }, `${r.name}（${state.meta.team_names[r.team]}）`);
         if (state.ui.actGuess === r.id) opt.setAttribute("selected", "");
         sel.append(opt);

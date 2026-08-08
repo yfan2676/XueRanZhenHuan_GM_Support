@@ -502,7 +502,7 @@
           for (const s of (pv.night && pv.night.my_steps) || []) {
             if (s.done) continue;
             await post("/night/action", {
-              name: nm, step_id: s.id, no_action: false, cure: true,
+              name: nm, step_id: s.id, no_action: false,
               targets: botTargets(s),
             }).catch(() => {});
           }

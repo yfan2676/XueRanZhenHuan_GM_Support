@@ -15,9 +15,16 @@ BASE_DIST = {
     10: (7, 0, 2),
     11: (7, 1, 2),
     12: (7, 2, 2),
-    13: (9, 0, 3),
-    14: (9, 1, 3),
+    # 13/14 人偏离官方（官方为 9/0/3、9/1/3）：本 Mod 爪牙个个能打（华妃压提名、
+    # 安陵容夜夜下毒、皇后备胎恶魔），且随机池只有 3 名爪牙，3 爪牙局等于全员必上，
+    # 邪恶 4/13 明显偏强。故 13/14 人只配 2 爪牙，名额还给外来者——13 人也因此有了外来者位。
+    13: (9, 1, 2),
+    14: (9, 2, 2),
     15: (9, 2, 3),
+    # 16 人为本桌扩展（官方止于 15 人）：爪牙仍保持 3。本 Mod 只有 4 名爪牙，
+    # 且苏培盛会改动村民/外来者配额、不进随机池，凑第 4 名爪牙等于强制他每局登场
+    # （并连带槿汐对食 → 邪恶 6/16），故用外来者 +1 而非爪牙 +1 来吃掉这一人。
+    16: (9, 3, 3),
 }
 
 MIN_PLAYERS = min(BASE_DIST)
@@ -116,6 +123,56 @@ TEMPLATES = [
         "required_townsfolk": ["jingfei", "huanbi"],
         "required_outsiders": [],
         "outsider_priority": ["longyue", "zhenhuan", "qifei"],
+    },
+    {
+        "id": "jinzhi",
+        "name": "金枝玉叶",
+        "description": "处决有险：胧月被处决即输、纯元反噬首提名、祺贵人赌命检举、华妃压提名——每一票都要三思。",
+        "demon": "huangshang",
+        "required_minions": ["huafei"],
+        "required_townsfolk": ["chunyuan", "qiguiren"],
+        "required_outsiders": ["longyue"],
+        "outsider_priority": ["zhenhuan", "qifei"],
+    },
+    {
+        "id": "qisi",
+        "name": "起死回生",
+        "description": "死亡不是终点：年羹尧死后带人、叶澜依复活重置技能、皇后候场继任——双方都要算好每一条人命。",
+        "demon": "huangshang",
+        "required_minions": ["huanghou"],
+        "required_townsfolk": ["yelanyi", "niangengyao"],
+        "required_outsiders": [],
+        "outsider_priority": ["longyue", "zhenhuan", "qifei"],
+    },
+    {
+        "id": "huokou",
+        "name": "祸从口出",
+        "description": "白天大乱斗：齐妃禁言、敦亲王灌酒、祺贵人检举，安陵容暗中下毒让公开发言真假难辨。",
+        "demon": "huangshang",
+        "required_minions": ["anlingrong"],
+        "required_townsfolk": ["dunqinwang", "qiguiren"],
+        "required_outsiders": ["qifei"],
+        "outsider_priority": ["sundaying", "longyue"],
+    },
+    {
+        "id": "fengyi",
+        "name": "凤仪天下",
+        "description": "两条继承线对撞：皇后随时可继任恶魔，甄嬛被刀反杀成女皇且废掉皇后，三阿哥握终局钥匙。",
+        "demon": "huangshang",
+        "required_minions": ["huanghou"],
+        "required_townsfolk": ["sanage"],
+        "required_outsiders": ["zhenhuan"],
+        "outsider_priority": ["longyue", "qifei"],
+    },
+    {
+        "id": "xingfeng",
+        "name": "腥风血雨",
+        "description": "大桌专属邪恶全明星：太后双选一杀、华妃压提名、安陵容夜夜下毒，温实初是好人唯一的解毒线。",
+        "demon": "taihou",
+        "required_minions": ["huafei", "anlingrong"],
+        "required_townsfolk": ["wenshichu", "xiaoyunzi"],
+        "required_outsiders": [],
+        "outsider_priority": ["longyue", "qifei", "zhenhuan"],
     },
 ]
 

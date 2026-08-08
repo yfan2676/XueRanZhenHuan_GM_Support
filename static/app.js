@@ -72,12 +72,27 @@ function roleAvatar(roleId, cls = "sm") {
 const isCompact = () => window.matchMedia("(max-width: 980px)").matches;
 const isPhone = () => window.matchMedia("(max-width: 700px)").matches;
 
-function seatPosition(i, n, radius = 260) {
+/* 圆桌半径随人数增长：座位卡宽 120px，相邻两张卡的中心距（弦长）不小于
+   SEAT_CHORD 才不至于叠成一坨。260 是 15 人及以下的历史值，保持不变。 */
+const SEAT_CHORD = 108;
+
+function tableGeom(n) {
+  const radius = Math.max(260, Math.round(SEAT_CHORD / 2 / Math.sin(Math.PI / n)));
+  return { radius, size: radius * 2 + 120 };   // size 640 ⟺ radius 260
+}
+
+function seatPosition(i, n) {
+  const { radius, size } = tableGeom(n);
   const angle = -Math.PI / 2 + (i * 2 * Math.PI) / n;
   return {
-    left: `${320 + radius * Math.cos(angle)}px`,
-    top: `${320 + radius * Math.sin(angle)}px`,
+    left: `${size / 2 + radius * Math.cos(angle)}px`,
+    top: `${size / 2 + radius * Math.sin(angle)}px`,
   };
+}
+
+/* 窄屏下圆桌摊平成网格，宽高由 CSS 接管，这里只给桌面端的绝对定位圆桌用 */
+function tableSizeStyle(n) {
+  return `--table-size:${tableGeom(n).size}px`;
 }
 
 /* ---------- 窄屏「环形圆桌」----------
@@ -147,7 +162,7 @@ function applyRing(table) {
 
 /* 圆桌容器：插入 DOM 后量一次宽度决定环形排布 */
 function ringTable(center, seats, cls = "round-table") {
-  const el = h("div", { class: cls }, center, ...seats);
+  const el = h("div", { class: cls, style: tableSizeStyle(seats.length) }, center, ...seats);
   requestAnimationFrame(() => applyRing(el));
   return el;
 }
@@ -277,7 +292,8 @@ function renderCountScreen() {
 const BASE_DIST = {
   7: [5, 0, 1], 8: [5, 1, 1], 9: [5, 2, 1],
   10: [7, 0, 2], 11: [7, 1, 2], 12: [7, 2, 2],
-  13: [9, 0, 3], 14: [9, 1, 3], 15: [9, 2, 3],
+  13: [9, 1, 2], 14: [9, 2, 2], 15: [9, 2, 3],
+  16: [9, 3, 3],
 };
 
 function range(a, b) {
@@ -324,7 +340,7 @@ function renderNameScreen() {
     h("h2", { class: "screen-title" }, "第二步 · 录入玩家姓名"),
     h("p", { class: "hint" }, "按座位顺时针填写，回车跳到下一位。座位顺序影响邻座类技能（小允子、三阿哥、浣碧）。"),
     h("div", { class: "table-wrap" },
-      h("div", { class: "round-table names" },
+      h("div", { class: "round-table names", style: tableSizeStyle(n) },
         h("div", { class: "table-center" },
           h("div", { class: "big" }, `${n} 名玩家`),
           h("div", { class: "comp" }, "填写完毕后分配角色")
@@ -620,6 +636,26 @@ function memoPanel(v, groupCount = 4) {
       : null);
 }
 
+// 全桌一览：说书人在任何画面都能看到整桌身份/存活/状态（夜晚、裁定、结算报告都会带上）
+function seatStripPanel(v) {
+  return h("div", { class: "log-panel seat-strip" },
+    h("h3", "全桌一览"),
+    ...v.seats.map((p) => {
+      const role = state.roleById[p.role];
+      const shownRole = p.is_favored ? "宠妃" : (role?.name || "—");
+      const origNote = p.is_favored
+        ? `（原${role?.name || ""}）`
+        : (p.original_role && p.original_role !== p.role
+            ? `（原${state.roleById[p.original_role]?.name || ""}）` : "");
+      return h("div", { class: `strip-row ${p.alive ? "" : "dead"}` },
+        h("span", { class: "strip-seat" }, `${p.seat}号`),
+        h("span", { class: "strip-name" }, `${p.name}${p.alive ? "" : " ☠"}`),
+        h("span", { class: `strip-role team-${p.is_favored ? "minion" : role?.team || ""}` },
+          shownRole + origNote),
+        h("span", { class: "badges" }, ...statusBadges(p)));
+    }));
+}
+
 // ---------- 夜晚向导 ----------
 
 // 从选项里随机抽 count 个：优先只在 avoid !== true 的选项里抽（死者不进池子，
@@ -643,10 +679,18 @@ function renderNightScreen() {
   const allDone = curIdx === -1;
   const cur = allDone ? null : steps[curIdx];
 
+  // 宠妃禁足排在最前，所以轮到被禁足者时这一步早已录入：直接在清单上标出来，
+  // 免得说书人白白唤醒他、还照着假信息发情报。
+  const jz = steps.find((s) => s.id === "jinzu");
+  const silenced = jz && jz.collected && !jz.collected.no_action
+    ? jz.collected.targets[0] : null;
+
   const stepList = h("div", { class: "step-list" },
     ...steps.map((s, i) => {
       const done = s.collected !== null;
-      const cls = ["step-item", done ? "done" : "", i === curIdx ? "current" : ""].join(" ");
+      const voided = silenced != null && s.seat === silenced;
+      const cls = ["step-item", done ? "done" : "", i === curIdx ? "current" : "",
+                   voided ? "voided" : ""].join(" ");
       let summary = "";
       if (done) {
         if (s.collected.no_action) summary = "无行动";
@@ -668,7 +712,8 @@ function renderNightScreen() {
           } catch (e) { toast(e.message); }
         },
       }, h("span", { class: "step-t" },
-        s.seat ? roleAvatar(v.seats[s.seat - 1].role, "xs") : null, s.title),
+        s.seat ? roleAvatar(v.seats[s.seat - 1].role, "xs") : null, s.title,
+        voided ? h("span", { class: "voided-tag" }, "🚫 已被禁足") : null),
         h("span", { class: "step-sum" }, summary));
     })
   );
@@ -691,10 +736,10 @@ function renderNightScreen() {
         },
       }, o.label, o.note ? h("span", { class: "chip-note" }, ` ${o.note}`) : null);
     });
-    const cureBox = cur.extras.cure_toggle
-      ? h("label", { class: "cure-box" },
-          h("input", { type: "checkbox", checked: "", id: "cure-toggle" }),
-          " 若中毒/醉酒则为其解除")
+    const jinzuWarn = silenced != null && cur.seat === silenced
+      ? h("p", { class: "night-warn" },
+          "🚫 本步骤的行动者今夜已被宠妃禁足：照常录入即可，结算时会自动作废，"
+          + "信息类技能今夜也不会给出情报。")
       : null;
     card = h("div", { class: "night-card" },
       h("div", { class: "detail-head" },
@@ -703,8 +748,8 @@ function renderNightScreen() {
           h("div", { class: "night-actor" }, cur.actor || "说书人"),
           h("h3", cur.title))),
       h("p", { class: "night-prompt" }, cur.prompt),
+      jinzuWarn,
       h("div", { class: "chips" }, ...opts),
-      cureBox,
       h("div", { class: "actions" },
         h("button", {
           class: "primary",
@@ -734,8 +779,8 @@ function renderNightScreen() {
     h("h2", { class: "screen-title" }, `第 ${ns.number} 个夜晚${ns.number === 1 ? "（首夜）" : ""}`),
     h("p", { class: "hint" }, `对局 ID：${state.game.id}`),
     h("div", { class: "table-wrap" },
-      h("div", { class: "night-left" }, h("h3", "夜晚行动顺序"), stepList),
-      h("div", { class: "side-panel wide panel-first" }, card, logPanel(v))
+      h("div", { class: "night-left" }, h("h3", "夜晚行动顺序（完整唤醒清单）"), stepList),
+      h("div", { class: "side-panel wide panel-first" }, card, seatStripPanel(v), logPanel(v))
     )
   );
 }
@@ -747,8 +792,6 @@ async function submitNightAction(step, noAction) {
   const collected = noAction
     ? { no_action: true, targets: [] }
     : { targets: state.nightSel || [], no_action: false };
-  if (step.extras.cure_toggle)
-    collected.cure = document.getElementById("cure-toggle")?.checked ?? true;
   try {
     state.view = await api(`/api/games/${state.game.id}/night/action`, {
       method: "POST",
@@ -778,9 +821,12 @@ async function resolveLoop(commit) {
 
 function renderPending(p) {
   app.replaceChildren(
-    h("h2", { class: "screen-title" }, "结算中 · 需要说书人裁定"),
+    h("h2", { class: "screen-title" },
+      p.gm ? "结算中 · 需要说书人裁定" : "结算中 · 需要问玩家本人"),
     h("div", { class: "side-panel wide center-panel" },
       h("h3", p.prompt),
+      p.gm ? null : h("p", { class: "hint", style: "text-align:left" },
+        "这是玩家自己的选择，请转达后按他的意思录入（不要替他掷骰）。"),
       h("div", { class: "chips" },
         ...p.options.map((o) => h("button", {
           class: "chip",
@@ -798,7 +844,8 @@ function renderPending(p) {
                 resolveLoop(false);
               },
             }, "🎲 随机裁定"))
-        : null
+        : null,
+      seatStripPanel(state.view)
     )
   );
 }
@@ -833,7 +880,8 @@ function renderNightReport(rpt) {
         ...(packets.length ? packets : [h("div", { class: "log-item" }, "无")])),
       h("div", { class: "side-panel" },
         h("h3", "说书人备忘（保密）"),
-        ...(notes.length ? notes : [h("div", { class: "log-item" }, "无")]))
+        ...(notes.length ? notes : [h("div", { class: "log-item" }, "无")]),
+        seatStripPanel(v))
     ),
     h("div", { class: "actions" },
       h("button", { onclick: renderNightScreen }, "← 返回修改行动"),
@@ -923,8 +971,9 @@ function openDayMenu(p) {
       row.append(targetSel);
     }
     if (act.needs_role_guess) {
+      // 宠妃/女皇是转化出来的现身份，检举必须能猜中它们（猜原角色一律算错）
       roleSel = h("select", {},
-        ...state.meta.roles.filter((r) => !r.virtual)
+        ...state.meta.roles.filter((r) => !r.virtual || r.accusable)
           .map((r) => h("option", { value: r.id }, `${r.name}（${state.meta.team_names[r.team]}）`)));
       row.append(roleSel);
     }
