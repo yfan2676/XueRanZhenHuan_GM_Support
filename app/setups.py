@@ -15,16 +15,15 @@ BASE_DIST = {
     10: (7, 0, 2),
     11: (7, 1, 2),
     12: (7, 2, 2),
-    # 13/14 人偏离官方（官方为 9/0/3、9/1/3）：本 Mod 爪牙个个能打（华妃压提名、
-    # 安陵容夜夜下毒、皇后备胎恶魔），且随机池只有 3 名爪牙，3 爪牙局等于全员必上，
-    # 邪恶 4/13 明显偏强。故 13/14 人只配 2 爪牙，名额还给外来者——13 人也因此有了外来者位。
+    # 13-16 人一律 2 爪牙，偏离官方（官方 13/14/15 为 3 爪牙）：本 Mod 爪牙个个能打
+    # （华妃压提名、安陵容夜夜下毒、皇后备胎恶魔），且随机池只有 3 名爪牙，
+    # 3 爪牙局等于华妃+安陵容+皇后全员必上，实战大桌邪恶胜率明显偏高。
+    # 2 爪牙让三人每局随机缺席一个，名额还给外来者/村民（见 rules.md「建议板子配置」）。
     13: (9, 1, 2),
     14: (9, 2, 2),
-    15: (9, 2, 3),
-    # 16 人为本桌扩展（官方止于 15 人）：爪牙仍保持 3。本 Mod 只有 4 名爪牙，
-    # 且苏培盛会改动村民/外来者配额、不进随机池，凑第 4 名爪牙等于强制他每局登场
-    # （并连带槿汐对食 → 邪恶 6/16），故用外来者 +1 而非爪牙 +1 来吃掉这一人。
-    16: (9, 3, 3),
+    15: (9, 3, 2),
+    # 16 人为本桌扩展（官方止于 15 人）：多出的一人放村民位。
+    16: (10, 3, 2),
 }
 
 MIN_PLAYERS = min(BASE_DIST)
@@ -165,6 +164,46 @@ TEMPLATES = [
         "outsider_priority": ["longyue", "qifei"],
     },
     {
+        "id": "dixue",
+        "name": "滴血验亲",
+        "description": "名场面重演：祺贵人公开检举、温实初验毒、槿汐对质，皇后幕后候场——公开指控的真假之战。",
+        "demon": "huangshang",
+        "required_minions": ["huanghou"],
+        "required_townsfolk": ["qiguiren", "wenshichu", "jinxi"],
+        "required_outsiders": [],
+        "outsider_priority": ["zhenhuan", "longyue", "qifei"],
+    },
+    {
+        "id": "toutian",
+        "name": "偷天换日",
+        "description": "恶魔的位子换来换去：太上皇自刀传位、皇后候场继任，昨天验出的恶魔今天可能已是白身。",
+        "demon": "taishanghuang",
+        "required_minions": ["huanghou"],
+        "required_townsfolk": [],
+        "required_outsiders": [],
+        "outsider_priority": ["zhenhuan", "qifei", "longyue"],
+    },
+    {
+        "id": "yanxian",
+        "name": "眼线遍布",
+        "description": "好人向信息局：槿汐验人、小允子听邻、浣碧数间距、敬妃数砖，邪恶要在被推理出来之前杀穿全场。",
+        "demon": "huangshang",
+        "required_minions": [],
+        "required_townsfolk": ["jinxi", "xiaoyunzi", "huanbi", "jingfei"],
+        "required_outsiders": [],
+        "outsider_priority": ["longyue", "qifei", "zhenhuan"],
+    },
+    {
+        "id": "wanwan",
+        "name": "菀菀类卿",
+        "description": "白月光与替身同场：纯元反噬首提名、甄嬛被刀即反杀——皇上白天怕提名、夜里怕出刀。",
+        "demon": "huangshang",
+        "required_minions": [],
+        "required_townsfolk": ["chunyuan"],
+        "required_outsiders": ["zhenhuan"],
+        "outsider_priority": ["longyue", "qifei"],
+    },
+    {
         "id": "xingfeng",
         "name": "腥风血雨",
         "description": "大桌专属邪恶全明星：太后双选一杀、华妃压提名、安陵容夜夜下毒，温实初是好人唯一的解毒线。",
@@ -299,7 +338,7 @@ def analyze(role_ids: list[str]) -> dict:
     if "chunyuan" in has:
         warnings.append("纯元皇后在场：留意首次提名触发处决")
     if "sanage" in has:
-        warnings.append("三阿哥在场：准备成功/失败手势，注意与皇上撞人捉奸")
+        warnings.append("三阿哥在场：准备成功/失败手势，注意与皇上撞侍寝目标才算捉奸（撞刀口不算）")
     if "taihou" in has and "huanghou" in has:
         warnings.append("太后+皇后同场：太后死亡且存活≥5 时皇后继任太后")
 

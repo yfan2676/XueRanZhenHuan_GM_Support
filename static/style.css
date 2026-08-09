@@ -276,6 +276,13 @@ button.small { padding: 4px 10px; font-size: 12px; }
 }
 .memo-panel .log-item { border-left-color: var(--gold-dim); color: var(--text); }
 .memo-more { font-size: 11px; color: var(--muted); margin-top: 6px; }
+/* 行动录：条数多，默认折叠成一行，点开才铺出当晚每个角色的选择 */
+.memo-fold > summary {
+  font-size: 11px; color: var(--gold-dim); cursor: pointer;
+  padding: 2px 0 4px 2px; list-style: none;
+}
+.memo-fold > summary:hover { color: var(--gold); }
+.memo-fold[open] > summary { margin-bottom: 2px; }
 
 .day-act { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
 .day-act select { flex: 1; min-width: 140px; background: var(--panel-2); color: var(--text);

@@ -367,8 +367,14 @@ function nightPanel(v) {
   if (!steps.length) {
     panel.append(h("p", { class: "night-wait" },
       night.resolving ? "夜晚结算中，等待某位玩家做出决定…"
-        : `你今晚无需行动，安心闭眼。等待其他玩家…（还剩 ${night.waiting_count} 步未完成）`));
+        : night.waiting_for_info
+          ? "📨 你的夜间信息即将送达，收到后再做行动决定…（本人信息先于本人决定）"
+          : `你今晚无需行动，安心闭眼。等待其他玩家…（还剩 ${night.waiting_count} 步未完成）`));
     return panel;
+  }
+  if (night.waiting_for_info) {
+    panel.append(h("p", { class: "night-wait" },
+      "📨 你还有后续步骤在等待你的夜间信息送达（本人信息先于本人决定）"));
   }
   for (const s of steps) panel.append(stepForm(v, s));
   if (night.waiting_count > 0) {
@@ -651,12 +657,15 @@ function seatsPanel(v) {
 function privateFeed(v) {
   const logs = v.me?.private_log || [];
   if (!logs.length) return null;
+  // 夜里当场送达的信息（安陵容情报、侍寝反馈等）标为新情报，提醒先看再行动
+  const freshTag = v.phase === "night" && v.night ? `夜${v.night.number}` : null;
   return h("div", { class: "pcard" },
     h("h3", { class: "pcard-t" }, "私密信息（只有你能看到）"),
     h("div", { class: "feed" },
       ...logs.slice().reverse().map((l) =>
         h("div", { class: "feed-item private" },
           h("span", { class: "feed-tag" }, l.tag),
+          l.tag === freshTag ? h("span", { class: "feed-tag", style: "background:#b23; color:#fff" }, "🔔 新情报") : null,
           h("div", {}, ...l.lines.map((x) => h("div", {}, x)))))));
 }
 

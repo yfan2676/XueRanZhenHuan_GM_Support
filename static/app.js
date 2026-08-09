@@ -292,8 +292,8 @@ function renderCountScreen() {
 const BASE_DIST = {
   7: [5, 0, 1], 8: [5, 1, 1], 9: [5, 2, 1],
   10: [7, 0, 2], 11: [7, 1, 2], 12: [7, 2, 2],
-  13: [9, 1, 2], 14: [9, 2, 2], 15: [9, 2, 3],
-  16: [9, 3, 3],
+  13: [9, 1, 2], 14: [9, 2, 2], 15: [9, 3, 2],
+  16: [10, 3, 2],
 };
 
 function range(a, b) {
@@ -619,8 +619,31 @@ function logPanel(v, count = 10) {
     ...items.map((x) => h("div", { class: "log-item" }, x)));
 }
 
-// 说书人备忘（保密）：与"事件记录"分开——事件记录是流水账，这里是结算判定细节。
-// 按事件成组（夜1 / 白天1 …），组倒序（最近的事件在最上面），组内保持结算先后。
+// 一组备忘的正文：【行动录】（谁选了谁，很长）折叠起来，【结算判定】平铺直显。
+// 两个分节标记由 engine.night_record / resolve_night 写入，这里只负责排版。
+function memoBody(items) {
+  const out = [];
+  let fold = null;
+  for (const x of items) {
+    if (x.startsWith("【行动录】")) {
+      fold = h("details", { class: "memo-fold" },
+        h("summary", {}, x.replace("【行动录】", "▸ 行动录：")));
+      out.push(fold);
+      continue;
+    }
+    if (x.startsWith("【结算判定】")) {
+      fold = null;
+      continue;
+    }
+    const line = h("div", { class: "log-item" }, x);
+    if (fold) fold.append(line);
+    else out.push(line);
+  }
+  return out;
+}
+
+// 说书人备忘（保密）：与"事件记录"分开——事件记录是流水账，这里是当晚的完整行动录
+// 与结算判定细节。按事件成组（夜1 / 白天1 …），组倒序，组内保持结算先后。
 function memoPanel(v, groupCount = 4) {
   const all = v.memos || [];
   const groups = all.slice(-groupCount).reverse();
@@ -629,7 +652,7 @@ function memoPanel(v, groupCount = 4) {
     ...(groups.length
       ? groups.map((g) => h("div", { class: "memo-group" },
           h("div", { class: "memo-tag" }, g.tag),
-          ...g.items.map((x) => h("div", { class: "log-item" }, x))))
+          ...memoBody(g.items)))
       : [h("div", { class: "log-item" }, "暂无备忘")]),
     all.length > groups.length
       ? h("div", { class: "memo-more" }, `⋯ 更早还有 ${all.length - groups.length} 组`)
@@ -670,6 +693,29 @@ function rollOptions(options, count) {
   return out;
 }
 
+// 需要在收行动途中当场传达的信息（rules.md 一.14「本人信息先于本人决定」）：
+// 录到该步骤时，把预览结算里对应 kind 的 packet 先念给玩家听，再收他的选择
+const STEP_INFO_KIND = { alr_poison: "alr_info", baby: "yulu", kill: "yulu" };
+
+// 后台预览结算：为夜晚收集流提供 voided（权威禁足名单）与提前发放的信息包。
+// 遇到裁定点走 renderPending，答完回到夜晚收集流（而非报告页）。
+async function refreshNightPreview() {
+  if (state.previewBusy) return;
+  state.previewBusy = true;
+  try {
+    const res = await api(`/api/games/${state.game.id}/night/resolve`, {
+      method: "POST",
+      body: JSON.stringify({ answers: state.answers, commit: false }),
+    });
+    state.previewBusy = false;
+    if (res.pending)
+      return renderPending(res.pending,
+        () => { state.nightPreview = null; renderNightScreen(); });
+    state.nightPreview = res.report;
+    renderNightScreen();
+  } catch (e) { state.previewBusy = false; toast(e.message); }
+}
+
 function renderNightScreen() {
   const v = state.view;
   const ns = v.night_state;
@@ -679,11 +725,21 @@ function renderNightScreen() {
   const allDone = curIdx === -1;
   const cur = allDone ? null : steps[curIdx];
 
+  // 入夜初始化：清空上一夜的裁定答案与「已当场传达」记录，并立刻做一次
+  // 预览结算，让夜初遗留裁定（祺贵人、年羹尧）在收行动之前就浮出来
+  if (state.nightNumber !== ns.number) {
+    state.nightNumber = ns.number;
+    state.answers = {};
+    state.deliveredInfo = {};
+    state.nightPreview = null;
+  }
+  if (!state.nightPreview && !state.previewBusy) refreshNightPreview();
+
   // 宠妃禁足排在最前，所以轮到被禁足者时这一步早已录入：直接在清单上标出来，
   // 免得说书人白白唤醒他、还照着假信息发情报。
-  const jz = steps.find((s) => s.id === "jinzu");
-  const silenced = jz && jz.collected && !jz.collected.no_action
-    ? jz.collected.targets[0] : null;
+  // 名单以引擎结算的 voided 为准——宠妃自己醉/毒、连禁同一人时禁足是无效的
+  const voidedSeats = (state.nightPreview && state.nightPreview.voided) || [];
+  const silenced = voidedSeats.length ? voidedSeats[0] : null;
 
   const stepList = h("div", { class: "step-list" },
     ...steps.map((s, i) => {
@@ -708,6 +764,7 @@ function renderNightScreen() {
               body: JSON.stringify({ step_id: s.id, collected: null }),
             });
             state.nightSel = [];
+            state.nightPreview = null;
             renderNightScreen();
           } catch (e) { toast(e.message); }
         },
@@ -717,6 +774,35 @@ function renderNightScreen() {
         h("span", { class: "step-sum" }, summary));
     })
   );
+
+  // 说书人回头改过早前步骤：已当场传达的信息若与最新结算不一致，必须提醒；
+  // 说书人向玩家更正口径后点「已更正」清除警告
+  let staleWarn = null;
+  if (state.nightPreview) {
+    const stale = Object.entries(state.deliveredInfo || {}).filter(([kind, lines]) =>
+      lines !== JSON.stringify(
+        state.nightPreview.packets.filter((p) => p.kind === kind).map((p) => p.lines)));
+    if (stale.length) {
+      staleWarn = h("div", { class: "night-warn" },
+        h("p", {}, "⚠ 你修改过早前的步骤，之前已当场传达的信息与最新结算不一致——"
+          + "请到对应玩家处更正口径："),
+        ...stale.map(([kind]) => {
+          const pkts = state.nightPreview.packets.filter((p) => p.kind === kind);
+          return h("div", {}, ...(pkts.length
+            ? pkts.map((p) => h("div", {}, `→ ${p.seat}号 现应为：${p.lines.join("；")}`))
+            : [h("div", {}, `→ 原「${kind === "alr_info" ? "安陵容情报" : "侍寝反馈"}」现已不存在（撤回）`)]));
+        }),
+        h("div", { class: "actions" },
+          h("button", {
+            onclick: () => {
+              for (const [kind] of stale)
+                state.deliveredInfo[kind] = JSON.stringify(
+                  state.nightPreview.packets.filter((p) => p.kind === kind).map((p) => p.lines));
+              renderNightScreen();
+            },
+          }, "已向玩家更正，清除警告")));
+    }
+  }
 
   let card;
   if (cur) {
@@ -741,6 +827,24 @@ function renderNightScreen() {
           "🚫 本步骤的行动者今夜已被宠妃禁足：照常录入即可，结算时会自动作废，"
           + "信息类技能今夜也不会给出情报。")
       : null;
+    // 「本人信息先于本人决定」：录本步之前要当场传达的信息（安陵容情报 / 侍寝反馈）
+    let infoBox = null;
+    const infoKind = STEP_INFO_KIND[cur.id];
+    if (infoKind && state.nightPreview) {
+      const pkts = state.nightPreview.packets.filter((p) => p.kind === infoKind);
+      if (pkts.length) {
+        state.deliveredInfo[infoKind] = JSON.stringify(pkts.map((p) => p.lines));
+        infoBox = h("div", { class: "night-warn", style: "border-color:var(--gold)" },
+          h("div", { style: "font-weight:bold" },
+            "📣 先当场告诉TA，再收本步的选择（本人信息先于本人决定）："),
+          ...pkts.map((p) => h("div", { class: `detail-box ${p.malfunction ? "malf" : ""}` },
+            h("div", { class: "detail-head" },
+              h("div", { class: "detail-role" },
+                `→ ${p.seat}号 ${v.seats[p.seat - 1].name}`,
+                p.malfunction ? h("span", { class: "malf-tag" }, " 醉/毒：应给假信息！") : null)),
+            ...p.lines.map((l) => h("div", {}, l)))));
+      }
+    }
     card = h("div", { class: "night-card" },
       h("div", { class: "detail-head" },
         cur.seat ? roleAvatar(v.seats[cur.seat - 1].role, "lg") : null,
@@ -749,6 +853,8 @@ function renderNightScreen() {
           h("h3", cur.title))),
       h("p", { class: "night-prompt" }, cur.prompt),
       jinzuWarn,
+      staleWarn,
+      infoBox,
       h("div", { class: "chips" }, ...opts),
       h("div", { class: "actions" },
         h("button", {
@@ -769,9 +875,11 @@ function renderNightScreen() {
   } else {
     card = h("div", { class: "night-card" },
       h("h3", "所有行动已收集完毕"),
+      staleWarn,
       h("p", { class: "night-prompt" }, "点击下方按钮按规则结算今夜所有行动。"),
       h("div", { class: "actions" },
-        h("button", { class: "primary", onclick: () => { state.answers = {}; resolveLoop(false); } }, "🌙 开始结算"))
+        // 收行动途中的裁定答案（state.answers）要带进最终结算，不能清空
+        h("button", { class: "primary", onclick: () => resolveLoop(false) }, "🌙 开始结算"))
     );
   }
 
@@ -798,6 +906,7 @@ async function submitNightAction(step, noAction) {
       body: JSON.stringify({ step_id: step.id, collected }),
     });
     state.nightSel = [];
+    state.nightPreview = null;
     renderNightScreen();
   } catch (e) { toast(e.message); }
 }
@@ -819,7 +928,9 @@ async function resolveLoop(commit) {
   } catch (e) { toast(e.message); }
 }
 
-function renderPending(p) {
+// next：答完后回到哪条流。默认继续「开始结算」的报告流；
+// 收行动途中预览触发的裁定则传入回夜晚收集流的回调
+function renderPending(p, next = () => resolveLoop(false)) {
   app.replaceChildren(
     h("h2", { class: "screen-title" },
       p.gm ? "结算中 · 需要说书人裁定" : "结算中 · 需要问玩家本人"),
@@ -830,7 +941,7 @@ function renderPending(p) {
       h("div", { class: "chips" },
         ...p.options.map((o) => h("button", {
           class: "chip",
-          onclick: () => { state.answers[p.key] = o.value; resolveLoop(false); },
+          onclick: () => { state.answers[p.key] = o.value; next(); },
         }, o.label))
       ),
       // 只有说书人自己的裁定能掷骰；年羹尧带人、太上皇传位本质是玩家的选择
@@ -841,7 +952,7 @@ function renderPending(p) {
                 const pick = rollOptions(p.options, 1)[0];
                 if (!pick) return;
                 state.answers[p.key] = pick.value;
-                resolveLoop(false);
+                next();
               },
             }, "🎲 随机裁定"))
         : null,
@@ -858,7 +969,7 @@ function renderNightReport(rpt) {
     : [h("div", { class: "warning info" }, "今夜平安无事（无人死亡）")];
   const revived = rpt.revived.map((r) =>
     h("div", { class: "warning info" }, `❀ ${r.seat}号 ${r.name} 复活`));
-  const packets = rpt.packets.map((p) => {
+  const pktBox = (p) => {
     const seat = v.seats[p.seat - 1];
     return h("div", { class: `detail-box ${p.malfunction ? "malf" : ""}` },
       h("div", { class: "detail-head" },
@@ -867,8 +978,16 @@ function renderNightReport(rpt) {
           `→ ${p.seat}号 ${seat.name}（${state.roleById[p.role]?.name || p.role}）`,
           p.malfunction ? h("span", { class: "malf-tag" }, " 醉/毒：应给假信息！") : null)),
       ...p.lines.map((l) => h("div", {}, l)));
-  });
+  };
+  // 收行动途中已当场传达过的信息（安陵容情报、侍寝反馈）不再列入唤醒清单，
+  // 折叠起来仅供复核（rules.md 一.14）
+  const deliveredKinds = new Set(Object.keys(state.deliveredInfo || {}));
+  const packets = rpt.packets.filter((p) => !deliveredKinds.has(p.kind)).map(pktBox);
+  const delivered = rpt.packets.filter((p) => deliveredKinds.has(p.kind)).map(pktBox);
   const notes = rpt.notes.map((x) => h("div", { class: "log-item" }, x));
+  // 行动录：今夜每个角色选了谁。结算后 night_state 就没了，这份会一起存进备忘，
+  // 事后向玩家复盘全靠它（预览折叠起来，避免挤掉真正要看的判定）。
+  const record = (rpt.record || []).slice(1);
 
   app.replaceChildren(
     h("h2", { class: "screen-title" }, "夜晚结算报告（预览）"),
@@ -877,10 +996,20 @@ function renderNightReport(rpt) {
         h("h3", "黎明公布（公开信息）"), ...deaths, ...revived),
       h("div", { class: "side-panel" },
         h("h3", "逐位传递信息（依次唤醒）"),
-        ...(packets.length ? packets : [h("div", { class: "log-item" }, "无")])),
+        ...(packets.length ? packets : [h("div", { class: "log-item" }, "无")]),
+        delivered.length
+          ? h("details", {},
+              h("summary", {}, `已于收行动时当场传达（${delivered.length} 条，复核用）`),
+              ...delivered)
+          : null),
       h("div", { class: "side-panel" },
         h("h3", "说书人备忘（保密）"),
         ...(notes.length ? notes : [h("div", { class: "log-item" }, "无")]),
+        record.length
+          ? h("details", { style: "margin-top:8px" },
+              h("summary", {}, `今夜行动录（${record.length} 条，将存入备忘）`),
+              ...record.map((x) => h("div", { class: "log-item" }, x)))
+          : null,
         seatStripPanel(v))
     ),
     h("div", { class: "actions" },

@@ -139,6 +139,7 @@ def _begin(room):
 def prep_night(room):
     """自动收集说书人代选的步骤，然后若无剩余玩家步骤则直接结算。"""
     rnd = random.Random()
+    room["night_delivered"] = []
     for s in room["night_state"]["steps"]:
         if s["collected"] is not None or s["id"] not in AUTO_STEPS:
             continue
@@ -156,7 +157,7 @@ def prep_night(room):
         else:
             s["collected"] = {"no_action": True, "targets": []}
     store.update(room)
-    return maybe_resolve(room)
+    return _progress(room)
 
 
 def night_action(room, name, step_id, no_action=False, targets=None):
@@ -168,6 +169,8 @@ def night_action(room, name, step_id, no_action=False, targets=None):
     step = next((s for s in room["night_state"]["steps"] if s["id"] == step_id), None)
     if step is None or step["seat"] != p["seat"] or step["id"] in AUTO_STEPS:
         raise ValueError("这不是你的行动步骤")
+    if step_id in _locked_step_ids(room):
+        raise ValueError("先等待你的夜间信息（rules.md 一.14：本人信息先于本人决定）")
     if no_action:
         if not step["optional"]:
             raise ValueError("该行动不可跳过")
@@ -186,7 +189,7 @@ def night_action(room, name, step_id, no_action=False, targets=None):
         collected = {"no_action": False, "targets": ts}
     engine.record_action(room, step_id, collected)
     store.update(room)
-    return maybe_resolve(room)
+    return _progress(room)
 
 
 def night_decision(room, name, value):
@@ -200,7 +203,99 @@ def night_decision(room, name, value):
     room["night_answers"][pend["key"]] = match["value"]
     room["night_pending"] = None
     store.update(room)
-    return _resolve_loop(room)
+    return _progress(room)
+
+
+def _progress(room):
+    """夜晚统一推进入口：先跑信息门（rules.md 一.14），再看是否可最终结算。
+
+    信息门触发的中途裁定（如年羹尧带人）答复后也回到这里——绝不能直接进
+    _resolve_loop，否则未收齐的夜晚会被当作「全员无行动」提前 commit。
+    """
+    if room.get("phase") != "night" or not room.get("night_state") \
+            or room.get("night_pending"):
+        return room
+    if not _run_gates(room):
+        return room  # 门里挂出了玩家裁定，等待 night_decision
+    return maybe_resolve(room)
+
+
+# 「本人信息先于本人决定」的两道门：packet kind -> 发放前必须收齐的前置步骤
+# （按夜序，交集当夜实际存在的步骤；alr_info 是自动步骤，开夜即有，
+#  只需等禁足定下来；侍寝反馈要等它之前的全部结算依赖：禁足→毒→解毒→守护→侍寝）
+GATES = [
+    ("alr_info", {"jinzu"}),
+    ("yulu", {"jinzu", "alr_info", "alr_poison", "check", "protect", "yulu"}),
+]
+# 各门送达前锁定的本人后续决定
+GATE_LOCKS = {"alr_info": {"alr_poison"}, "yulu": {"baby", "kill"}}
+
+
+def _locked_step_ids(room):
+    ns = room.get("night_state") or {}
+    ids = {s["id"] for s in ns.get("steps", [])}
+    delivered = room.get("night_delivered") or []
+    locked = set()
+    for kind, _ in GATES:
+        if kind in ids and kind not in delivered:
+            locked |= GATE_LOCKS[kind] & ids
+    return locked
+
+
+def _run_gates(room):
+    """依次尝试发放各信息门。返回 False = 挂出了玩家裁定（night_pending）。"""
+    steps = room["night_state"]["steps"]
+    ids = {s["id"] for s in steps}
+    delivered = room.setdefault("night_delivered", [])
+    for kind, prereq in GATES:
+        if kind not in ids or kind in delivered:
+            continue
+        if any(s["collected"] is None for s in steps if s["id"] in prereq & ids):
+            continue
+        rpt = _partial_resolve(room)
+        if rpt is None:
+            return False
+        _deliver(room, rpt, kind)
+    store.update(room)
+    return True
+
+
+def _partial_resolve(room):
+    """不 commit 的结算（未收齐的步骤按无行动跳过，前缀 packet 已是最终值）。
+
+    gm=True 的裁定当场掷骰；gm=False 的挂 night_pending 并返回 None。
+    """
+    answers = room.setdefault("night_answers", {})
+    rnd = random.Random()
+    while True:
+        result, _ = engine.resolve_night(room, answers, commit=False)
+        pend = result.get("pending")
+        if not pend:
+            return result["report"]
+        seat = None if pend.get("gm", True) else _player_decision_seat(room, pend["key"])
+        if seat is not None:
+            room["night_pending"] = {**pend, "seat": seat}
+            store.update(room)
+            return None
+        pool = [o for o in pend["options"] if not o.get("avoid")] or pend["options"]
+        answers[pend["key"]] = rnd.choice(pool)["value"]
+
+
+def _deliver(room, rpt, kind):
+    """把该门的 packet 立即私信给当事人；假信息在此刻一次性生成（即冻结）。"""
+    tag = f"夜{room['night_state']['number']}"
+    pkts = [p for p in rpt["packets"] if p["kind"] == kind]
+    for pkt in pkts:
+        lines = _fake_lines(room, pkt) if pkt.get("malfunction") else pkt["lines"]
+        private(room, pkt["seat"], tag, lines)
+    room["night_delivered"].append(kind)
+    if kind == "alr_info" and not pkts:
+        # 无 packet = 安陵容被宠妃禁足（她若已死则连步骤都没有，不会走到这）。
+        # 规则：被禁足者整夜不唤醒——下毒也代答「无行动」，玩家端不再收到该步骤
+        s = next((x for x in room["night_state"]["steps"]
+                  if x["id"] == "alr_poison"), None)
+        if s and s["collected"] is None:
+            s["collected"] = {"no_action": True, "targets": [], "jailed": True}
 
 
 def maybe_resolve(room):
@@ -249,6 +344,10 @@ def _resolve_loop(room):
 def _after_night(old, g, rpt):
     n = g["night_number"]
     tag = f"夜{n}"
+    # 夜里已经当场发放过的信息门（安陵容情报、侍寝反馈）破晓不再重复；
+    # 已写入 private_log 的那份（含一次性生成的假信息）就是最终版本
+    delivered = set(old.get("night_delivered") or [])
+    g["night_delivered"] = []
     g["night_answers"] = {}
     g["night_pending"] = None
     if rpt["deaths"]:
@@ -258,9 +357,16 @@ def _after_night(old, g, rpt):
         announce(g, tag, "黎明：昨夜平安无事")
     for r in rpt["revived"]:
         announce(g, tag, f"叶澜依的祝福显灵：{r['seat']}号 {r['name']} 复活了！")
+    # 复盘用：行动录（谁选了谁）与结算判定一并进隐藏记录，终局揭示时全桌可看
+    for line in rpt.get("record") or []:
+        g["hidden_log"].append(f"{tag}：{line}")
+    if rpt["notes"] and rpt.get("record"):
+        g["hidden_log"].append(f"{tag}：【结算判定】")
     for note in rpt["notes"]:
         g["hidden_log"].append(f"{tag}：{note}")
     for pkt in rpt["packets"]:
+        if pkt["kind"] in delivered:
+            continue
         lines = _fake_lines(g, pkt) if pkt.get("malfunction") else pkt["lines"]
         private(g, pkt["seat"], tag, lines)
     _transition_packets(old, g, tag)
@@ -575,8 +681,14 @@ def view(room, name=None):
             "resolving": bool(room.get("night_pending")),
         }
         if me:
+            # 信息门锁定中的步骤（安陵容的下毒、皇上的宝宝/刀）暂不下发：
+            # 玩家先收到私信里的信息，步骤随后自动出现（rules.md 一.14）。
+            # 因禁足被机器人代答（jailed）的步骤同样不下发——被禁足者不唤醒
+            locked = _locked_step_ids(room)
             mine = [s for s in steps
-                    if s["seat"] == me["seat"] and s["id"] not in AUTO_STEPS]
+                    if s["seat"] == me["seat"] and s["id"] not in AUTO_STEPS
+                    and s["id"] not in locked
+                    and not (s["collected"] or {}).get("jailed")]
             out["night"]["my_steps"] = [{
                 "id": s["id"], "title": s["title"], "prompt": s["prompt"],
                 "count": s["pick"]["count"], "options": s["pick"]["options"],
@@ -584,6 +696,8 @@ def view(room, name=None):
                 "done": s["collected"] is not None,
                 "collected": s["collected"],
             } for s in mine]
+            out["night"]["waiting_for_info"] = any(
+                s["seat"] == me["seat"] and s["id"] in locked for s in steps)
             pend = room.get("night_pending")
             if pend and pend["seat"] == me["seat"]:
                 out["night"]["my_decision"] = {

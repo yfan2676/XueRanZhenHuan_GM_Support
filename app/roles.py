@@ -25,7 +25,7 @@ ROLES = [
     {"id": "jingfei", "name": "敬妃", "title": "砖妃数砖", "team": "townsfolk", "gender": "F", "non_male": True,
      "ability": "首夜得知场上非男性角色数量。被皇上杀死时得知存活邪恶玩家数。"},
     {"id": "sanage", "name": "三阿哥", "title": "弘时", "team": "townsfolk", "gender": "M", "non_male": False,
-     "ability": "每晚染指左右一名存活邻座：可解除雨露均沾转化；与皇上撞人被捉奸处死；染指女皇当即处死。"},
+     "ability": "每晚染指左右一名存活邻座：可解除雨露均沾转化；与皇上同晚侍寝同一人被捉奸处死（撞刀口不算）；染指女皇当即处死。"},
     {"id": "niangengyao", "name": "年羹尧", "title": "护国大将军", "team": "townsfolk", "gender": "M", "non_male": False,
      "ability": "死亡当晚可带走一名玩家（全局一次）。"},
     {"id": "chunyuan", "name": "纯元皇后", "title": "白月光", "team": "townsfolk", "gender": "F", "non_male": True,
